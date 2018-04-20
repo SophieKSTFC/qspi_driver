@@ -223,7 +223,8 @@ def read_quad_out_memory(mem_address, num_bytes):
     print_out = ""
 
     #read in blocks of 16 bytes.
-    for x in range(0, 240, 16): 
+    for x in range(0, 28734812, 16): 
+        print(x)
 
         read_mem_sequence = "" #clear the read_sequence every time so we dont repeat.
 
@@ -232,10 +233,10 @@ def read_quad_out_memory(mem_address, num_bytes):
         mid = (address & 0x00FF00) >> 8
         lsb = (address & 0x0000FF)
 
-        print("Mem Address:  %s" % hex(address))
-        print(hex(msb))
-        print(hex(mid))
-        print(hex(lsb))
+        #print("Mem Address:  %s" % hex(address))
+        #print(hex(msb))
+        #print(hex(mid))
+        #print(hex(lsb))
 
         # first part of memory read sequence
         read_mem_sequence +="devmem 0x41210008 32 0x104\n\
@@ -281,7 +282,7 @@ def read_quad_out_memory(mem_address, num_bytes):
         address += 16
 
     #print(read_mem_sequence)
-    print(print_out)
+    #print(print_out)
 
 
 def read_quad_io_memory():
