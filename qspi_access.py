@@ -1,8 +1,16 @@
+"""
+    Script interface to QSPI Controller
+    Using DEVMEM access through subprocess
+
+"""
+
+
 import sys
 import argparse
 import subprocess
-
+import binascii
   
+
 MUX_BASE = 0x41210008
 MUX_SET = 0x104
 MUX_DESET = 0x100
@@ -38,7 +46,7 @@ look_up = {"READ_ID" : READ_ID,
         "READ_QUAD_IO": READ_QUAD_IO
     }
 
-
+#Reads the Spansion Flash ID, printing to terminal out 
 def read_id():
 
     print("Reading SPANSION Flash ID")
@@ -69,7 +77,7 @@ def read_id():
     output, error = id_pipe.communicate()
     print(output.decode('utf8'))
   
-
+#Reads the Spansion Flash Status Register, printing to terminal out, returns the status value 
 def read_status_register():
 
     print("Reading SPANSION Flash Status Register")
@@ -90,11 +98,11 @@ def read_status_register():
         
     output, error = id_pipe.communicate()
     
-
-    status_register = output[5:]
+    status_register = output[5:] #first byte is dummy data, we only want the second byte
     print(status_register.decode('utf8'))
     return status_register
 
+#Reads the Spansion Flash Config Register, printing to terminal out
 def read_config_register():
 
     print("Reading SPANSION Flash Configuration Register")
@@ -115,9 +123,10 @@ def read_config_register():
 
     output, error = id_pipe.communicate()
 
-    config_register = output[5:] #the second byte is the actual register.
+    config_register = output[5:] #first byte is dummy data, we only want the second byte
     print(config_register.decode('utf8'))
 
+# Reads the Bank Address Register, used to check the addressing mode of the spansion flash device
 def read_BAR_register():
 
     print("Reading SPANSION Flash Bank Address Register")
@@ -139,14 +148,11 @@ def read_BAR_register():
     output, error = id_pipe.communicate()
     print(output.decode('utf8'))
 
-
+"""
+    Writes to the status and configuration register of the spansion flash device.
+    Calls write enable and read_status_register and config_register to check results
+"""
 def write_registers(status_reg, config_reg):
-
-    '''
-    1. check that write is enabled.
-    2. write registers
-    3. read registers and check they have actually been written
-    '''
 
     print("Writing Status and Configuration Registers in the SPANSION Flash to %s : %s ." % (status_reg, config_reg))
 
@@ -170,6 +176,7 @@ def write_registers(status_reg, config_reg):
     read_status_register() #read back out the status reg
     read_config_register() #read back out the config reg
 
+#sets the write enable latch inside the status register. checking if write enable is already set first.
 def write_enable():
 
     write_latch = int(read_status_register(), 16) #read_status_register() #check if already set..
@@ -204,39 +211,24 @@ def write_enable():
     else:
         print("Flash Write is Already Enabled")
 
-def read_memory(base_address, offset_address, dummy_bytes):
-    pass
 
 def read_quad_out_memory(mem_address, num_bytes):
 
-    
-    address = int(mem_address, 16)
-    '''
-    hex_test = hex(test)
-
-    print(test)
-    print(hex_test)
-
-    msb = (test & 0xFF0000) >> 16
-    mid = (test & 0x00FF00) >> 8
-    lsb = (test & 0x0000FF)
-    
-    print(hex(msb))
-    print(hex(mid))
-    print(hex(lsb))
-    '''
-    #do once..
-
-    #num_bytes must always be 8 less than boundary.
 
     
-    output_file = open("qspi_bitfile.bin", "wb")
+    address = int(mem_address, 16)  #convert the memory address into a string
+
+    #formatting this file = od -A x -t x1 qspi_bitfile.bin 
+    output_file = open("qspi_bitfile.bin", "wb") #create a binary file to write the output to
     print_out = ""
 
-    for x in range(0, 240, 16):
+    #read in blocks of 16 bytes.
+    for x in range(0, 240, 16): 
 
-        read_mem_sequence = ""
-        msb = (address & 0xFF0000) >> 16
+        read_mem_sequence = "" #clear the read_sequence every time so we dont repeat.
+
+        #split the starting 24 bit memory address into 3 bytes 
+        msb = (address & 0xFF0000) >> 16 
         mid = (address & 0x00FF00) >> 8
         lsb = (address & 0x0000FF)
 
@@ -245,70 +237,52 @@ def read_quad_out_memory(mem_address, num_bytes):
         print(hex(mid))
         print(hex(lsb))
 
+        # first part of memory read sequence
         read_mem_sequence +="devmem 0x41210008 32 0x104\n\
                             devmem 0xA0030060 32 0x000001E6\n\
                             devmem 0xA0030068 8 0x6B\n\
                             devmem 0xA0030068 8 " + hex(msb) + "\n" + "devmem 0xA0030068 8 " + hex(mid) + "\n" + "devmem 0xA0030068 8 " + hex(lsb) + "\n"
 
-        for x in range(0, 24):#add 16 dummy bytes.
+        #we need to read 16 bytes of real data, plus there is ALWAYS 8 bytes of preamble nonsense (00's 0c cc etc), so we need 24 dummy bytes
+        for x in range(0, 24):
             read_mem_sequence += "devmem 0xA0030068 8 0xAA\n"
 
+        #add the next section to the read sequence
         read_mem_sequence +="devmem 0xA0030070 8 0x00\n\
                             devmem 0xA0030060 32 0x00000086\n\
                             devmem 0xA0030070 8 0x01\n\
                             devmem 0xA0030060 32 0x00000186\n"
         
-        for x in range(0, 24):#read 16 dummy bytes
-            read_mem_sequence += "devmem 0xA003006C 8\n"
-
-        
+        #perform that devmem sequence before doing any actual reads from the rx buffer
         id_pipe = subprocess.Popen(read_mem_sequence, shell=True, stdout=subprocess.PIPE)
         output, error = id_pipe.communicate()
-        output = str(output)[39:]
         print_out += output
-        
+
+        # we want to read out the first 8 bytes of preamble but not store it in the binary file
+        for x in range(0, 8):#read out and discard the first 8 bytes (preamble junk)
+            read_byte = "devmem 0xA003006C 8\n"
+            id_pipe = subprocess.Popen(read_byte, shell=True, stdout=subprocess.PIPE)
+            junk, error = id_pipe.communicate()
+      
+        # now we want to read our the real 16 bytes, convert to binary and store in the binary file.
+        for x in range(0, 16):#read the real 16  bytes of data, convert to binary and write to bin file
+            read_byte = "devmem 0xA003006C 8\n"
+            id_pipe = subprocess.Popen(read_byte, shell=True, stdout=subprocess.PIPE)
+            byte, error = id_pipe.communicate()
+            print_out += byte
+            byte = str(byte)[2:4]
+            #print(byte)
+            binary_data = binascii.unhexlify(byte)
+            output_file.write(binary_data)
+
+        #output = str(output)[39:]
+        #print_out += output
+        # add 16 to the address so we move to the next address boundary in the bin file.
         address += 16
 
     #print(read_mem_sequence)
     print(print_out)
-    #print(output.decode('utf8'))
 
-
-    """
-    read_mem_sequence ="devmem 0x41210008 32 0x104\n\
-                        devmem 0xA0030060 32 0x000001E6\n\
-                        devmem 0xA0030068 8 0x6B\n\
-                        devmem 0xA0030068 8 " + hex(msb) + "\n" + "devmem 0xA0030068 8 " + hex(mid) + "\n" + "devmem 0xA0030068 8 " + hex(lsb) + "\n"
-
-    print(read_mem_sequence)
-    """
-
-    """
-    num_bytes = int(num_bytes, 10) + 8
-    print(num_bytes)
-    
-    for x in range(0, num_bytes):
-        read_mem_sequence += "devmem 0xA0030068 8 0xAA\n"
-
-    read_mem_sequence +="devmem 0xA0030070 8 0x00\n\
-                        devmem 0xA0030060 32 0x00000086\n\
-                        devmem 0xA0030070 8 0x01\n\
-                        devmem 0xA0030060 32 0x00000186\n"
-
-    for x in range(0, num_bytes):
-        read_mem_sequence += "devmem 0xA003006C 8\n"
-    
-    #print(read_mem_sequence)
-    
-    id_pipe = subprocess.Popen(read_mem_sequence, shell=True, stdout=subprocess.PIPE)
-    output, error = id_pipe.communicate()
-
-    output = str(output)[39:]
-
-
-    
-    print(output.decode('utf8'))
-    """
 
 def read_quad_io_memory():
     pass
