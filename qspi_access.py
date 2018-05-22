@@ -148,6 +148,29 @@ def read_BAR_register():
     output, error = id_pipe.communicate()
     print(output.decode('utf8'))
 
+def write_bar(bar_reg):
+
+    print("Writing Bank Address Register in the SPANSION Flash to %s ." % (bar_reg))
+
+
+    write_bar_sequence ="devmem 0x41210008 32 0x104\n\
+                        devmem 0xA0030060 32 0x000001E6\n\
+                        devmem 0xA0030068 8 0x17\n\
+                        devmem 0xA0030068 8 " + bar_reg +"\n\
+                        devmem 0xA0030070 8 0x00\n\
+                        devmem 0xA0030060 32 0x00000086\n\
+                        devmem 0xA0030070 8 0x01\n\
+                        devmem 0xA0030060 32 0x00000186\n\
+                        devmem 0x41210008 32 0x100\n"
+
+
+    id_pipe = subprocess.Popen(write_bar_sequence, shell=True, stdout=subprocess.PIPE)
+    output, error = id_pipe.communicate()
+    print(output.decode('utf8'))
+
+    read_BAR_register()
+
+
 """
     Writes to the status and configuration register of the spansion flash device.
     Calls write enable and read_status_register and config_register to check results
@@ -215,37 +238,41 @@ def write_enable():
 def read_quad_out_memory(mem_address, num_bytes):
 
 
-    
+
     address = int(mem_address, 16)  #convert the memory address into a string
 
     #formatting this file = od -A x -t x1 qspi_bitfile.bin 
-    output_file = open("qspi_bitfile.bin", "wb") #create a binary file to write the output to
+    output_file = open("qspi_bitfile_128.bin", "wb") #create a binary file to write the output to
     print_out = ""
 
+    increment = 128
     #read in blocks of 16 bytes.
-    for x in range(0, 28734812, 16): 
+    #for x in range(0, 28734812, 16): 
+    for x in range(0, num_bytes, increment): 
+       
         print(x)
-
         read_mem_sequence = "" #clear the read_sequence every time so we dont repeat.
 
-        #split the starting 24 bit memory address into 3 bytes 
-        msb = (address & 0xFF0000) >> 16 
-        mid = (address & 0x00FF00) >> 8
-        lsb = (address & 0x0000FF)
-
-        #print("Mem Address:  %s" % hex(address))
-        #print(hex(msb))
-        #print(hex(mid))
-        #print(hex(lsb))
+        #split the starting 32 bit memory address into 4 bytes 
+        msb = (address & 0xFF000000) >> 24
+        mid1= (address & 0x00FF0000) >> 16 
+        mid2 = (address & 0x0000FF00) >> 8
+        lsb = (address & 0x000000FF)
+        
+        '''
+        print("Mem Address:  %s" % hex(address))
+        print(hex(msb))
+        print(hex(mid1))
+        print(hex(mid2))
+        print(hex(lsb))
+        '''
 
         # first part of memory read sequence
-        read_mem_sequence +="devmem 0x41210008 32 0x104\n\
-                            devmem 0xA0030060 32 0x000001E6\n\
-                            devmem 0xA0030068 8 0x6B\n\
-                            devmem 0xA0030068 8 " + hex(msb) + "\n" + "devmem 0xA0030068 8 " + hex(mid) + "\n" + "devmem 0xA0030068 8 " + hex(lsb) + "\n"
+        read_mem_sequence +="devmem 0x41210008 32 0x104\n" + "devmem 0xA0030060 32 0x000001E6\n" + "devmem 0xA0030068 8 0x6C\n" + "devmem 0xA0030068 8 " + hex(msb).rstrip('L') + "\n" + "devmem 0xA0030068 8 " + hex(mid1) + "\n" + "devmem 0xA0030068 8 " + hex(mid2) + "\n" + "devmem 0xA0030068 8 " + hex(lsb) + "\n"
 
-        #we need to read 16 bytes of real data, plus there is ALWAYS 8 bytes of preamble nonsense (00's 0c cc etc), so we need 24 dummy bytes
-        for x in range(0, 24):
+        #we need to read 16 bytes of real data, plus there is ALWAYS 9 bytes (4 addressing, 5 preamble) of preamble nonsense (00's 0c cc etc), so we need increment + 9 dummy bytes
+        #for x in range(0, 24):
+        for x in range(0, (increment+9)):
             read_mem_sequence += "devmem 0xA0030068 8 0xAA\n"
 
         #add the next section to the read sequence
@@ -254,19 +281,25 @@ def read_quad_out_memory(mem_address, num_bytes):
                             devmem 0xA0030070 8 0x01\n\
                             devmem 0xA0030060 32 0x00000186\n"
         
+        #print(read_mem_sequence)
+
+       
         #perform that devmem sequence before doing any actual reads from the rx buffer
         id_pipe = subprocess.Popen(read_mem_sequence, shell=True, stdout=subprocess.PIPE)
         output, error = id_pipe.communicate()
         print_out += output
-
-        # we want to read out the first 8 bytes of preamble but not store it in the binary file
-        for x in range(0, 8):#read out and discard the first 8 bytes (preamble junk)
+        
+        
+        # we want to read out the first 9 bytes of preamble but not store it in the binary file
+        for x in range(0, 9):#read out and discard the first 9 bytes (preamble junk)
             read_byte = "devmem 0xA003006C 8\n"
+            #print(read_byte)
             id_pipe = subprocess.Popen(read_byte, shell=True, stdout=subprocess.PIPE)
             junk, error = id_pipe.communicate()
       
-        # now we want to read our the real 16 bytes, convert to binary and store in the binary file.
-        for x in range(0, 16):#read the real 16  bytes of data, convert to binary and write to bin file
+        # now we want to read our the real 128 bytes, convert to binary and store in the binary file.
+        #for x in range(0, 16):#read the real 16  bytes of data, convert to binary and write to bin file
+        for x in range(0, increment):#read the real 128  bytes of data, convert to binary and write to bin file
             read_byte = "devmem 0xA003006C 8\n"
             id_pipe = subprocess.Popen(read_byte, shell=True, stdout=subprocess.PIPE)
             byte, error = id_pipe.communicate()
@@ -279,12 +312,16 @@ def read_quad_out_memory(mem_address, num_bytes):
         #output = str(output)[39:]
         #print_out += output
         # add 16 to the address so we move to the next address boundary in the bin file.
-        address += 16
-
+        #address += 16
+        
+        address += 128
+        #print("end of loop int address %d" % address)
+        #print("end of loop hex address %s" % hex(address))
+    
     #print(read_mem_sequence)
     #print(print_out)
 
-
+    
 def read_quad_io_memory():
     pass
 
@@ -296,18 +333,20 @@ def main():
     parser.add_argument("-operation", "--operation", help="Function to perform, \
                         default = READ_ID, 0x90", default="READ_ID")
 
-
     parser.add_argument("-status_val", "--status_val", help="Status Register Value to Write, \
                         default = 0x00", default= 0x00)
 
     parser.add_argument("-config_val", "--config_val", help="Configuration Register Value to Write, \
                         default = 0x02 - Latency Code 00, Quad Mode Enabled", default= 0x02)
+
+    parser.add_argument("-bar_val", "--bar_val", help="Bank Address Register Value to Write, \
+                        default = 0x40 - 4 Byte Addressing", default= 0x40)
     
     parser.add_argument("-read_address", "--read_address", help="24 Bit Address to Start Reading Flash Memory, \
                         default = 0x000120", default= "0x000120")
 
     parser.add_argument("-num_bytes", "--num_bytes", help="Number of Bytes to Read From Flash Memory, \
-                        default = 8", default="8")
+                        default = 28734812", default=28734812)
     
     args = parser.parse_args()
 
@@ -331,17 +370,26 @@ def main():
     elif args.operation == "WRITE_ENABLE":
         write_enable()
     elif args.operation == "WRITE_REG":
-        
         write_registers(args.status_val, args.config_val)
-
     elif args.operation == "READ_STATUS":
         read_status_register()
     elif args.operation == "READ_CONFIG":
         read_config_register()
     elif args.operation == "READ_BAR":
         read_BAR_register()
+    elif args.operation == "WRITE BAR":
+        write_bar(args.bar_val)
     elif args.operation == "READ_QUAD_OUT":
-        read_quad_out_memory(args.read_address, args.num_bytes)
+
+    
+        if args.num_bytes is not 28734812:
+            int_num_bytes = int(args.num_bytes, 10)
+        else: 
+            int_num_bytes = args.num_bytes
+
+        #print(int_num_bytes)
+
+        read_quad_out_memory(args.read_address, int_num_bytes)
     elif args.operation == "READ_QUAD_IO":
         read_quad_io_memory()
     else:
