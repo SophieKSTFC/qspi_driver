@@ -6,12 +6,12 @@ class MemException : public std::exception
 {
 public:
 
-    // Blank Fem2ControlMsgException constructor
+    // Blank MemException constructor
     MemException(void) throw() :
         error_msg("")
     {};
 
-    // Fem2ControlMsgException with error message
+    // MemException with error message
     MemException(const std::string the_error_msg) throw() :
         error_msg(the_error_msg)
     {};
@@ -29,4 +29,4 @@ private:
 
     const std::string error_msg;  // The error message
 
-};// fem2exception
+};// MemException
