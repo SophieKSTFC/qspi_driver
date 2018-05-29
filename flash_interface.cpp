@@ -11,6 +11,8 @@
 #define MUX_OFFSET 0x08
 #define MUX_SET_FL1 0x104
 #define MUX_SET_FL2 0x105
+#define MUX_SET_FL3 0x106
+#define MUX_SET_FL4 0x107
 #define MUX_DESET 0x100
 #define MUX_WIDTH 32 
 
@@ -32,6 +34,8 @@
 #define FL_READ_BAR 0x16
 #define FL_READ_QUAD_OUT 0x6C
 #define FL_READ_QUAD_IO 0xEB
+#define FL_QUAD_PP 0x34
+#define FL_BULK_ERASE 0x60
 
 #define RESET_FIFO_MSTR_CONFIG_ENABLE 0x000001E6
 
@@ -60,13 +64,14 @@ std::ofstream std_binfile;
 *   Returns True if the Status Reg Bit 2 is High.
 */
 bool tx_empty(){
-    //int status_reg = qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH);
     return ((qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH) == 36) ? true : false);
 }
 
+/*  Check whether the TX buffer in the QSPI controller is empty
+*   Returns True if the Status Reg Bit 2 is High.
+*/
 uint8_t read_flash_status_reg(){
 
-    std::cout << "reading flash mem.." << std::endl;
     qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
     qspi_controller.write_mem(QSPI_DTR, FL_READ_STATUS, QSPI_STD_WIDTH);
     qspi_controller.write_mem(QSPI_DTR, DUMMY_DATA, QSPI_STD_WIDTH);
@@ -79,23 +84,77 @@ uint8_t read_flash_status_reg(){
     }
     qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
     qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-
     qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
-
     uint8_t sr = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
-    printf("0x%X\n", sr);
     return sr;
+}
+
+uint8_t read_flash_config_reg(){
+
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_READ_CONFIG, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, DUMMY_DATA, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool tx_state = tx_empty();
+    while (tx_state == false){
+        tx_state = tx_empty();
+    }
+
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+    uint8_t config = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+    return config;
+}
+
+/*  Check whether a write is in progress on the flash device
+*   Returns True if the Status Reg Bit 0 is High.
+*/
+bool write_in_progress(){
+    std::bitset<8> status(read_flash_status_reg());
+    return ((status[0] == 1) ? true : false);
+}
+
+/*  Check whether write is enabled on the flash device
+*   Returns True if the Status Reg Bit 1 is High.
+*/
+bool is_write_enabled(){
+    std::bitset<8> status(read_flash_status_reg());
+    return ((status[1] == 1) ? true : false);
+}
+
+/*  Check whether an erase error occured on the flash device
+*   Returns True if the Status Reg Bit 5 is High.
+*/
+bool erase_error(){
+    std::bitset<8> status(read_flash_status_reg());
+    return ((status[5] == 1) ? true : false);
+}
+
+/*  Check whether a quad mode is enabled on the flash device
+*   Returns True if the Config Reg Bit 1 is High.
+*/
+bool is_quad_enabled(){
+    std::bitset<8> config(read_flash_config_reg());
+    return ((config[1] == 1) ? true : false);
+}
+
+/*  Check whether a quad mode is enabled on the flash device
+*   Returns True if the Config Reg Bit 1 is High.
+*/
+bool program_error(){
+    std::bitset<8> status(read_flash_status_reg());
+    return ((status[6] == 1) ? true : false);
 }
 
 void write_enable(){
 
-    if(read_flash_status_reg() == 0x02){
+    if(is_write_enabled()){
         std::cout << "Write Already Enabled" << std::endl;
     }
-
     else{
-
-        std::cout << "Write NOT Enabled" << std::endl;
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, FL_WRITE_ENABLE, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, 0x00, QSPI_STD_WIDTH);
@@ -103,14 +162,17 @@ void write_enable(){
         qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
 
+        /* don't check for tx empty -- too quick?
         bool tx_state = tx_empty();
         while (tx_state == false){
+            printf("stuck in a loop\n");
             tx_state = tx_empty();
         }
+        */
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
-        if(read_flash_status_reg() == 0x02){
+        if(is_write_enabled()){
             std::cout << "Write Has Been Enabled" << std::endl;
         }
         else{
@@ -118,6 +180,22 @@ void write_enable(){
         }
     }
 }
+
+
+void write_flash_registers(uint8_t& status_reg, uint8_t& config_reg){
+
+    write_enable();
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_WRITE_REG, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, status_reg, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, config_reg, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+
+}
+
 
 /*  Reads the Device ID of the Spansion Flash Memory
 *   Prints the two byte ID.
@@ -239,14 +317,24 @@ void read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::
         exit(1);
     }
 
-    uint32_t next_addr = read_loop(mem_address, FIFO_aligned_num_bytes, increment);
-    read_loop(next_addr, overflow_bytes, overflow_bytes);
-    binfile.close();
-    std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << " ms" << std::endl;
-    
-}
+    //quad_enable.
 
+    if(!is_quad_enabled()){
+        uint8_t status = 0x00;
+        uint8_t config = 0x02;
+        write_flash_registers(status, config);
+    }
+    if(is_quad_enabled()){
+        uint32_t next_addr = read_loop(mem_address, FIFO_aligned_num_bytes, increment);
+        read_loop(next_addr, overflow_bytes, overflow_bytes);
+        binfile.close();
+        std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
+        std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << " ms to read" << std::endl;
+    }
+    else{
+        std::cout << "Quad Mode Did Not Enable, Read Operation In-valid" << std::endl;
+    }
+}
 
 void erase_flash_memory(int& flash_num){
 
@@ -255,17 +343,109 @@ void erase_flash_memory(int& flash_num){
         exit(1);
     }
     else{
-
+    
+        std::chrono::high_resolution_clock::time_point start_erase = std::chrono::high_resolution_clock::now();
+        write_enable();
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
-        qspi_controller.write_mem(QSPI_DTR, FL_READ_QUAD_OUT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, FL_BULK_ERASE, QSPI_STD_WIDTH);
 
+        qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
 
+        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
 
+        bool wip = write_in_progress();
+        while(wip == true){
+            wip = write_in_progress();
+        }
+
+        if(erase_error()){
+            std::cout << "Erase Error Has Occured, Perform a Clear Status Register Operation to Reset the Device" << std::endl;
+        }
+        else{
+            std::chrono::high_resolution_clock::time_point finish_erase = std::chrono::high_resolution_clock::now();
+            std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish_erase - start_erase).count() << " ms to erase." << std::endl;
+            std::cout << "Erase Operation Complete" << std::endl;
+        }
 
     }
+}
+void write_flash_memory(int& flash_num){
+
+    //check that memory has been erased??
+
+    //write_enable();
+    erase_flash_memory(flash_num);
+    
+    std::chrono::high_resolution_clock::time_point start_write = std::chrono::high_resolution_clock::now();
+
+    write_enable();
+
+    if(!is_quad_enabled()){
+        uint8_t status = 0x00;
+        uint8_t config = 0x02;
+        write_flash_registers(status, config);
+    }
+    if(is_quad_enabled()){
+
+        qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+
+        uint32_t fbyte_address = 0x00000000;
+        uint8_t msb = (fbyte_address & 0xFF000000) >> 24;
+        uint8_t mid1 = (fbyte_address & 0x00FF0000) >> 16;
+        uint8_t mid2 = (fbyte_address & 0x0000FF00) >> 8;
+        uint8_t lsb = (fbyte_address & 0x000000FF);
+
+        qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+        for(int i =0; i < 128; i++){
+            qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
+        }
+
+        qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+        bool tx_state = tx_empty();
+        while (tx_state == false){
+            tx_state = tx_empty();
+        }
+
+        bool wip = write_in_progress();
+        while(wip == true){
+            wip = write_in_progress();
+        }
+         
+        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+
+        if(program_error()){
+            std::cout << "Write Failed" << std::endl;
+        }
+        else{
+            std::chrono::high_resolution_clock::time_point finish_write = std::chrono::high_resolution_clock::now();
+            std::cout << std::chrono::duration_cast<std::chrono::microseconds>(finish_write - start_write).count() << " micro s to write." << std::endl;
+            std::cout << "Write Successfull" << std::endl;
+        }
+        /*
+        binfile.close();
+        std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
+        std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << " ms" << std::endl;
+        */
+    }
+    else{
+        std::cout << "Quad Mode Did Not Enable, Write Operation In-valid" << std::endl;
+    }
+   
+
 
 
 }
+
 
 int main(int argc, char* argv[]){
 
@@ -292,6 +472,7 @@ int main(int argc, char* argv[]){
 
         qspi_controller.init_mmap();
         multiplexer.init_mmap();
+
         switch(flash_num){
             case 1:
                 std::cout << "Using Flash Memory Chip 1.." << std::endl;
@@ -301,31 +482,35 @@ int main(int argc, char* argv[]){
                 std::cout << "Using Flash Memory Chip 2.." << std::endl;
                 multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
                 break;
-            /*
             case 3:
+                std::cout << "Using Flash Memory Chip 3.." << std::endl;
+                multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
                 break;
             case 4:
+                std::cout << "Using Flash Memory Chip 4.." << std::endl;
+                multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
                 break;
-            */
             default:
                 std::cerr << "Flash Memory Chip Selected Does Not Exist" << std::endl;
                 return 1;
                 break;
         }
 
-
-        std::cout << "SR : " << read_flash_status_reg() << std::endl;
-        write_enable();
+        //write_enable();
         
         switch(cmd){
             case 10 :
-                std::cout << "Reading Flash Memory.." <<std::endl;
                 printf("\nReading %d bytes starting from address 0x%X ..\n", num_bytes, start_address);
                 printf("Printing to binary file called %s\n\n", filename.c_str()); 
                 read_spansion_memory(start_address, num_bytes, filename);
                 break;
             case 20 :
                 std::cout << "Erasing Flash Memory.." << std::endl;
+                erase_flash_memory(flash_num);
+                break;
+            case 30 :
+                std::cout << "Writing 16 Bytes of AA to 0x00000000" << std::endl;
+                write_flash_memory(flash_num);
                 break;
             default:
                 break;
