@@ -61,10 +61,28 @@ std::ofstream std_binfile;
 
 
 /*  Check whether the TX buffer in the QSPI controller is empty
-*   Returns True if the Status Reg Bit 2 is High.
+*   Returns True if the Status Reg Bit 2 is High. (bit 5 is always highd)
+*/
+/*
+bool tx_empty(){
+   
+    return ((qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH) == 36) ? true : false);
+}
+*/
+/*  Check whether a write is in progress on the flash device
+*   Returns True if the Status Reg Bit 0 is High.
 */
 bool tx_empty(){
-    return ((qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH) == 36) ? true : false);
+    std::bitset<8> qspi_status(qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
+    return ((qspi_status[2] == 1) ? true : false);
+}
+
+/*  Check whether a write is in progress on the flash device
+*   Returns True if the Status Reg Bit 0 is High.
+*/
+bool rx_empty(){
+    std::bitset<8> qspi_status(qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
+    return ((qspi_status[0] == 1) ? true : false);
 }
 
 /*  Check whether the TX buffer in the QSPI controller is empty
@@ -298,6 +316,87 @@ uint32_t read_loop(uint32_t& address, unsigned long& num_bytes, unsigned long& i
     }
     return fbyte_address;
 }
+
+
+uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& increment){
+
+
+    uint8_t buffer_128[increment]; 
+
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_READ_QUAD_OUT, QSPI_STD_WIDTH);
+
+    // bit shift the four byte address into 4 bytes
+    uint8_t msb = (address & 0xFF000000) >> 24;
+    uint8_t mid1 = (address & 0x00FF0000) >> 16;
+    uint8_t mid2 = (address & 0x0000FF00) >> 8;
+    uint8_t lsb = (address & 0x000000FF);
+
+    qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+    for(int j =0; j < increment + PREAMBLE_SIZE; j++){
+        qspi_controller.write_mem(QSPI_DTR, DUMMY_DATA, QSPI_STD_WIDTH);
+    }
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool tx_state = tx_empty();
+    while (tx_state == false){
+        tx_state = tx_empty();
+    }
+
+    // read out but don't print the preamble junk
+    for(int k = 0; k < PREAMBLE_SIZE; k++){
+        qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+    }
+
+    // read and write bytes to binary file 
+    for(int d =0; d < increment; d++){
+        uint8_t byte = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+        //binfile.write((char*)&byte, sizeof byte);
+        buffer_128[d] = byte;
+    }
+    binfile.write((char*)&buffer_128, sizeof (buffer_128));
+    memset(&buffer_128[0], 0, sizeof(buffer_128));
+    unsigned long bytes_read = increment;
+
+    while(bytes_read < num_bytes){
+        for(int j =0; j < increment; j++){
+            qspi_controller.write_mem(QSPI_DTR, DUMMY_DATA, QSPI_STD_WIDTH);
+        }
+        qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+        bool tx_state = tx_empty();
+        while (tx_state == false){
+            tx_state = tx_empty();
+        }
+        /*
+        // read out but don't print the preamble junk
+        for(int k = 0; k < PREAMBLE_SIZE; k++){
+            qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+        }
+        */
+
+        // read and write bytes to binary file 
+        for(int d =0; d < increment; d++){
+            uint8_t byte = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+            //binfile.write((char*)&byte, sizeof byte);
+            buffer_128[d] = byte;
+        }
+        binfile.write((char*)&buffer_128, sizeof (buffer_128));
+        memset(&buffer_128[0], 0, sizeof(buffer_128));
+        bytes_read +=increment;
+    }
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+
+    return bytes_read;
+}
+
 /*  Sets up the read memory loop function, calculates how many bytes to read across the FIFO depth 
 *   Calls read_loop with the FIFO aligned num_bytes and then with the overflow num_bytes
 *   Calculates the time the read has taken in milliseconds.
@@ -325,8 +424,15 @@ void read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::
         write_flash_registers(status, config);
     }
     if(is_quad_enabled()){
+        uint32_t next_addr = topup_read(mem_address, FIFO_aligned_num_bytes, increment);
+        //printf("Next Address = 0x%x\n", next_addr);
+        topup_read(next_addr, overflow_bytes, overflow_bytes);
+        /*
+
         uint32_t next_addr = read_loop(mem_address, FIFO_aligned_num_bytes, increment);
         read_loop(next_addr, overflow_bytes, overflow_bytes);
+
+        */
         binfile.close();
         std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
         std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << " ms to read" << std::endl;
@@ -371,7 +477,83 @@ void erase_flash_memory(int& flash_num){
 
     }
 }
-void write_flash_memory(int& flash_num){
+
+
+
+
+
+uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
+
+    uint32_t fbyte_address = mem_address;
+
+    for(int i = 0; i < num_bytes; i+= 128){
+
+        std::cout << i << std::endl;
+        printf("address = %d \n", fbyte_address);
+
+        if(!is_write_enabled()){
+            write_enable();
+        }
+
+        //printf("QSPI_STATUS_REG = 0x%X\n", qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
+
+        //printf("tx buffer %s\n", (tx_empty() == true ? "tx empty" : "not empty")); 
+        qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+        printf("tx buffer %s\n", (tx_empty() == true ? "tx empty post reset" : "tx not empty post reset")); 
+
+        printf("rx buffer %s\n", (rx_empty() == true ? "rx empty post reset" : "rx not empty post reset")); 
+
+        //bool test = tx_empty();
+       // while (test == false){
+           // test = tx_empty();
+        //}
+
+        qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+    
+        uint8_t msb = (fbyte_address & 0xFF000000) >> 24;
+        uint8_t mid1 = (fbyte_address & 0x00FF0000) >> 16;
+        uint8_t mid2 = (fbyte_address & 0x0000FF00) >> 8;
+        uint8_t lsb = (fbyte_address & 0x000000FF);
+
+        qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+        for(int d =0; d < 128; d++){
+            qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
+        }
+        qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+        bool tx_state = tx_empty();
+        while (tx_state == false){
+            tx_state = tx_empty();
+        }
+        bool wip = write_in_progress();
+        while(wip == true){
+            wip = write_in_progress();
+        }
+
+        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+
+        if(program_error()){
+            std::cout << "Write Failed" << std::endl;
+        }
+
+        unsigned long inc = 128;
+        //print_read(fbyte_address, inc);
+        
+        fbyte_address += 128;
+
+        
+    }
+    return fbyte_address;
+}
+
+
+void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& num_bytes){
 
     //check that memory has been erased??
 
@@ -388,7 +570,7 @@ void write_flash_memory(int& flash_num){
         write_flash_registers(status, config);
     }
     if(is_quad_enabled()){
-
+        /*
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
 
@@ -422,6 +604,13 @@ void write_flash_memory(int& flash_num){
          
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        */
+        unsigned long test_bytes = 128;
+        uint32_t address_1 = 0x00000000;
+        uint32_t address_2 = 0x00000080;
+        //write_loop(address_1, num_bytes);
+        //write_loop(address_2, test_bytes);
+        write_loop(mem_address, num_bytes);
 
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
@@ -440,16 +629,11 @@ void write_flash_memory(int& flash_num){
     else{
         std::cout << "Quad Mode Did Not Enable, Write Operation In-valid" << std::endl;
     }
-   
-
-
-
 }
 
 
 int main(int argc, char* argv[]){
 
-    
     if(argc < 6){
         std::cerr << "Usage : " << std::endl << "<filename> (binary file to write FLASH memory to)" << std::endl;
         std::cerr << "<start_address> (memory address to begin reading from, in hex)" << std::endl; 
@@ -466,9 +650,6 @@ int main(int argc, char* argv[]){
         unsigned long num_bytes = strtoul(argv[3], &end, 10);
         int flash_num = strtoul(argv[4], &end, 10);
         int cmd = strtoul(argv[5], &end, 10);
-
-       
-
 
         qspi_controller.init_mmap();
         multiplexer.init_mmap();
@@ -496,37 +677,30 @@ int main(int argc, char* argv[]){
                 break;
         }
 
-        //write_enable();
-        
         switch(cmd){
             case 10 :
                 printf("\nReading %d bytes starting from address 0x%X ..\n", num_bytes, start_address);
                 printf("Printing to binary file called %s\n\n", filename.c_str()); 
                 read_spansion_memory(start_address, num_bytes, filename);
+
+
                 break;
             case 20 :
                 std::cout << "Erasing Flash Memory.." << std::endl;
                 erase_flash_memory(flash_num);
                 break;
             case 30 :
-                std::cout << "Writing 16 Bytes of AA to 0x00000000" << std::endl;
-                write_flash_memory(flash_num);
+                printf("\nWriting %d bytes starting at address 0x%X ..\n", num_bytes, start_address);
+                write_flash_memory(flash_num, start_address, num_bytes);
                 break;
             default:
                 break;
 
         }
 
-        //read_spansion_id();
-        //read_spansion_memory(0x01b66ff0, 1388); // last 1387 bytes.
-        //read_spansion_memory(FL_MEM_START, FL_MEM_SIZE, filename);
-        
-        //read_spansion_memory(start_address, num_bytes, filename);
         qspi_controller.unmap();
-
         multiplexer.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
         multiplexer.unmap();
-
         return 0;
     }
 }
