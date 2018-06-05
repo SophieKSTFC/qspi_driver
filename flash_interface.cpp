@@ -59,25 +59,15 @@ qspi_memory multiplexer(MUX_BASE);
 std::ofstream binfile; 
 std::ofstream std_binfile; 
 
-
 /*  Check whether the TX buffer in the QSPI controller is empty
-*   Returns True if the Status Reg Bit 2 is High. (bit 5 is always highd)
-*/
-/*
-bool tx_empty(){
-   
-    return ((qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH) == 36) ? true : false);
-}
-*/
-/*  Check whether a write is in progress on the flash device
-*   Returns True if the Status Reg Bit 0 is High.
+*   Returns True if the Status Reg Bit 2 is High.
 */
 bool tx_empty(){
     std::bitset<8> qspi_status(qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
     return ((qspi_status[2] == 1) ? true : false);
 }
 
-/*  Check whether a write is in progress on the flash device
+/*  Check whether the RX buffer in the QSPI controller is empty
 *   Returns True if the Status Reg Bit 0 is High.
 */
 bool rx_empty(){
@@ -85,8 +75,8 @@ bool rx_empty(){
     return ((qspi_status[0] == 1) ? true : false);
 }
 
-/*  Check whether the TX buffer in the QSPI controller is empty
-*   Returns True if the Status Reg Bit 2 is High.
+/*  Reads the status register of the flash memory device
+*   Returns the byte value of the status register.
 */
 uint8_t read_flash_status_reg(){
 
@@ -104,11 +94,13 @@ uint8_t read_flash_status_reg(){
     qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
     qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
     uint8_t sr = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
-
-
+    
     return sr;
 }
 
+/*  Reads the config register of the flash memory device
+*   Returns the byte value of the config register.
+*/
 uint8_t read_flash_config_reg(){
 
     qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
@@ -126,6 +118,8 @@ uint8_t read_flash_config_reg(){
     qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
     qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
     uint8_t config = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
+
+
     return config;
 
 }
@@ -173,7 +167,7 @@ bool program_error(){
 void write_enable(){
 
     if(is_write_enabled()){
-        std::cout << "Write Already Enabled" << std::endl;
+        //std::cout << "Write Already Enabled" << std::endl;
     }
     else{
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
@@ -182,22 +176,15 @@ void write_enable(){
         qspi_controller.write_mem(QSPI_DTR, 0x01, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-
-        /* don't check for tx empty -- too quick?
-        bool tx_state = tx_empty();
-        while (tx_state == false){
-            printf("stuck in a loop\n");
-            tx_state = tx_empty();
-        }
-        */
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
         if(is_write_enabled()){
-            std::cout << "Write Has Been Enabled" << std::endl;
+            //std::cout << "Write Has Been Enabled" << std::endl;
         }
         else{
             std::cout << "Write Failed to Enable" << std::endl;
+            exit(1);
         }
     }
 }
@@ -416,14 +403,15 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
     for(int i=0; i < num_bytes; i+=FIFO_DEPTH){
 
+        
         if(!is_write_enabled()){
-            printf("Write was NOT already enabled\n");
+            //printf("Write was NOT already enabled\n");
             write_enable();
         }
         else{
-            printf("Write was already enabled\n");
+            //printf("Write was already enabled\n");
         }
-
+        
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
 
@@ -437,6 +425,7 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
 
+    
         for(int d =0; d < FIFO_DEPTH; d++){
             qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
         }
@@ -444,18 +433,13 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
-        bool tx_state = tx_empty();
-        while (tx_state == false){
-            tx_state = tx_empty();
+        bool tx__state = tx_empty();
+        while (tx__state == false){
+            tx__state = tx_empty();
         }
-        bool wip = write_in_progress();
-        while(wip == true){
-            wip = write_in_progress();
-        }
+        
         unsigned long bytes_written = FIFO_DEPTH;
 
-        bool rx_state = rx_empty();
-        printf("rx empty : %s", (rx_state ? "true" : "false"));
         /*
         while (rx_state == false){
             rx_state = rx_empty();
@@ -469,13 +453,6 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
             qspi_controller.write_mem(QSPI_DTR, FL_WRITE_ENABLE, QSPI_STD_WIDTH);
             qspi_controller.write_mem(QSPI_DTR, 0x00, QSPI_STD_WIDTH);
             qspi_controller.write_mem(QSPI_DTR, 0x01, QSPI_STD_WIDTH);
-
-            bool tx_statey_ = tx_empty();
-            while (tx_statey_ == false){
-                printf("stuck in tx state check for my new write enable.. ");
-                printf("QSPI Config Reg -- 0x%X\n", qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
-                tx_statey_ = tx_empty();
-            }
 
             //write_enable();
             if(!is_write_enabled()){
@@ -505,14 +482,18 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         */
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        bool rx__state = rx_empty();
-        printf("rx empty post disable : %s", (rx__state ? "true" : "false"));
+        
+        bool wip = write_in_progress();
+        while(wip == true){
+            wip = write_in_progress();
+        }
 
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
+            exit(1);
         }
         else{
-            std::cout << "Write Suceeded" << std::endl;
+            //std::cout << "Write Suceeded" << std::endl;
         }
 
         fbyte_address += 128;
@@ -524,8 +505,6 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& num_bytes){
 
     //check that memory has been erased??
-
-    //write_enable();
     erase_flash_memory(flash_num);
     
     std::chrono::high_resolution_clock::time_point start_write = std::chrono::high_resolution_clock::now();
@@ -537,12 +516,13 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
         uint8_t config = 0x02;
         write_flash_registers(status, config);
     }
-    if(is_quad_enabled()){
+    else{
 
         write_loop(mem_address, num_bytes);
 
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
+            exit(1);
         }
         else{
             std::chrono::high_resolution_clock::time_point finish_write = std::chrono::high_resolution_clock::now();
@@ -550,9 +530,7 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
             std::cout << "Write Successfull" << std::endl;
         }
     }
-    else{
-        std::cout << "Quad Mode Did Not Enable, Write Operation In-valid" << std::endl;
-    }
+
 }
 
 
