@@ -407,10 +407,6 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
             //printf("Write was NOT already enabled\n");
             write_enable();
         }
-        else{
-            //printf("Write was already enabled\n");
-        }
-        
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
 
@@ -458,8 +454,6 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
             bytes_written += FIFO_DEPTH;
 
             if(bytes_written % 512 == 0){
-
-                //printf("bytes written mod 512!\n");
                 qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
                 qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
@@ -490,7 +484,6 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         
         bool wip = write_in_progress();
         while(wip == true){
-           // printf("stuck in external wip\n");
             wip = write_in_progress();
         }
 
@@ -498,32 +491,52 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
             std::cout << "Write Failed" << std::endl;
             exit(1);
         }
-        else{
-            std::cout << "Write Suceeded" << std::endl;
-        }
+    return bytes_written;
+}
 
-        /*
-        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        
-        bool wip = write_in_progress();
-        while(wip == true){
-            wip = write_in_progress();
-        }
 
-        if(program_error()){
-            std::cout << "Write Failed" << std::endl;
-            exit(1);
-        }
-        else{
-            //std::cout << "Write Suceeded" << std::endl;
-        }
+void custom_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
-        fbyte_address += 128;
+    if(!is_write_enabled()){
+        write_enable();
     }
-    return fbyte_address;
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
 
-    */
+    uint8_t msb = (mem_address & 0xFF000000) >> 24;
+    uint8_t mid1 = (mem_address & 0x00FF0000) >> 16;
+    uint8_t mid2 = (mem_address & 0x0000FF00) >> 8;
+    uint8_t lsb = (mem_address & 0x000000FF);
+
+    qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+    for(int d =0; d < num_bytes; d++){
+        qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
+    }
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool tx_state_ = tx_empty();
+    while (tx_state_ == false){
+        tx_state_ = tx_empty();
+    }
+    
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+    bool wip = write_in_progress();
+    while(wip == true){
+        wip = write_in_progress();
+    }
+
+    if(program_error()){
+        std::cout << "Write Failed" << std::endl;
+        exit(1);
+    }
+
 }
 
 
@@ -534,6 +547,9 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
     
     std::chrono::high_resolution_clock::time_point start_write = std::chrono::high_resolution_clock::now();
 
+    unsigned long int FIFO_aligned_num_bytes = (floor(num_bytes/FIFO_DEPTH)) * FIFO_DEPTH;   // calculate how many times 128 goes into num_bytes round down to nearest integer calculate how many bytes can be read evenly on the FIFO boundary
+    unsigned long int overflow_bytes = num_bytes - FIFO_aligned_num_bytes; // find the overflow between even bytes and requested bytes. 
+
     write_enable();
 
     if(!is_quad_enabled()){
@@ -543,7 +559,8 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
     }
     else{
 
-        write_loop(mem_address, num_bytes);
+        uint32_t next_addr = write_loop(mem_address, FIFO_aligned_num_bytes);
+        custom_write_loop(next_addr, overflow_bytes);
 
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
@@ -551,7 +568,7 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
         }
         else{
             std::chrono::high_resolution_clock::time_point finish_write = std::chrono::high_resolution_clock::now();
-            std::cout << std::chrono::duration_cast<std::chrono::microseconds>(finish_write - start_write).count() << " micro s to write." << std::endl;
+            std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish_write - start_write).count() << " ms to write." << std::endl;
             std::cout << "Write Successfull" << std::endl;
         }
     }
