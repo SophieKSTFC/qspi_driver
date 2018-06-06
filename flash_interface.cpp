@@ -57,7 +57,8 @@ qspi_memory qspi_controller(QSPI_BASE);
 qspi_memory multiplexer(MUX_BASE);
 
 std::ofstream binfile; 
-std::ofstream std_binfile; 
+std::ofstream std_binfile;
+std::ifstream myFile ("c2c_top_wrapper.bin", std::ios::in | std::ios::binary); 
 
 /*  Check whether the TX buffer in the QSPI controller is empty
 *   Returns True if the Status Reg Bit 2 is High.
@@ -539,6 +540,167 @@ void custom_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
 }
 
+uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
+
+    uint8_t buffer[FIFO_DEPTH];
+    myFile.read((char*)(&buffer[0]), FIFO_DEPTH);  
+    if(!myFile){
+        std::cout << "File Failed to read FIFO Depth Bytes\n" << std::endl;
+    }
+
+    uint32_t fbyte_address = mem_address;
+
+    if(!is_write_enabled()){
+        //printf("Write was NOT already enabled\n");
+        write_enable();
+    }
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+
+    uint8_t msb = (fbyte_address & 0xFF000000) >> 24;
+    uint8_t mid1 = (fbyte_address & 0x00FF0000) >> 16;
+    uint8_t mid2 = (fbyte_address & 0x0000FF00) >> 8;
+    uint8_t lsb = (fbyte_address & 0x000000FF);
+
+    qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+
+    for(int d =0; d < FIFO_DEPTH; d++){
+        qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+    }
+
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool tx__state = tx_empty();
+    while (tx__state == false){
+        tx__state = tx_empty();
+    }
+
+    unsigned long bytes_written = FIFO_DEPTH;
+    memset(&buffer[0], 0, sizeof(buffer));
+    myFile.seekg(FIFO_DEPTH);
+
+    while(bytes_written < num_bytes){
+
+        //printf("bytes written = %d\n", bytes_written);
+        myFile.read((char*)(&buffer[0]), FIFO_DEPTH);  
+        if(!myFile){
+            std::cout << "File Failed to read FIFO Depth Bytes\n" << std::endl;
+        }
+        for(int d =0; d < FIFO_DEPTH; d++){
+            qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+        }
+        if(bytes_written % 512 == 0){
+            qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+            qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        }
+        bool tx_state_ = tx_empty();
+        while (tx_state_ == false){
+            tx_state_ = tx_empty();
+        }
+
+        bytes_written += FIFO_DEPTH;
+        memset(&buffer[0], 0, sizeof(buffer));
+        myFile.seekg(bytes_written);
+
+        if(bytes_written % 512 == 0){
+            qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+            qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+            bool wip = write_in_progress();
+            while(wip == true){
+                wip = write_in_progress();
+            }
+
+            write_enable();
+
+            qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+            qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+
+            uint8_t msb = (bytes_written & 0xFF000000) >> 24;
+            uint8_t mid1 = (bytes_written & 0x00FF0000) >> 16;
+            uint8_t mid2 = (bytes_written & 0x0000FF00) >> 8;
+            uint8_t lsb = (bytes_written & 0x000000FF);
+
+            qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+            qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+            qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+            qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+        }
+    }
+
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool wip = write_in_progress();
+    while(wip == true){
+        wip = write_in_progress();
+    }
+
+    if(program_error()){
+        std::cout << "Write Failed" << std::endl;
+        exit(1);
+    }
+    return bytes_written;
+}
+
+void custom_file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
+    
+    uint8_t buffer[num_bytes];
+    myFile.seekg(mem_address);
+    myFile.read((char*)(&buffer[0]), num_bytes);
+
+    if(!myFile){
+        std::cout << "File Failed to read FIFO Depth Bytes\n" << std::endl;
+    }
+    if(!is_write_enabled()){
+        write_enable();
+    }
+
+    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+
+    uint8_t msb = (mem_address & 0xFF000000) >> 24;
+    uint8_t mid1 = (mem_address & 0x00FF0000) >> 16;
+    uint8_t mid2 = (mem_address & 0x0000FF00) >> 8;
+    uint8_t lsb = (mem_address & 0x000000FF);
+
+    qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+
+    for(int d =0; d < num_bytes; d++){
+        qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+    }
+    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+    
+    bool tx_state_ = tx_empty();
+    while (tx_state_ == false){
+        tx_state_ = tx_empty();
+    }
+    
+    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+    bool wip = write_in_progress();
+    while(wip == true){
+        wip = write_in_progress();
+    }
+
+    if(program_error()){
+        std::cout << "Write Failed" << std::endl;
+        exit(1);
+    }
+    memset(&buffer[0], 0, sizeof(buffer));
+}
+
+
 
 void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& num_bytes){
 
@@ -558,10 +720,12 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
         write_flash_registers(status, config);
     }
     else{
-
+        uint32_t next_address = file_write_loop(mem_address, FIFO_aligned_num_bytes);
+        custom_file_write_loop(next_address, overflow_bytes);
+        /*
         uint32_t next_addr = write_loop(mem_address, FIFO_aligned_num_bytes);
         custom_write_loop(next_addr, overflow_bytes);
-
+        */
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
             exit(1);
@@ -595,6 +759,8 @@ int main(int argc, char* argv[]){
         int flash_num = strtoul(argv[4], &end, 10);
         int cmd = strtoul(argv[5], &end, 10);
 
+        //program_flash_from_file();
+        
         qspi_controller.init_mmap();
         multiplexer.init_mmap();
 
@@ -643,10 +809,12 @@ int main(int argc, char* argv[]){
                 break;
 
         }
-        
+
         qspi_controller.unmap();
         multiplexer.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
         multiplexer.unmap();
+
+        
         return 0;
     }
 }
