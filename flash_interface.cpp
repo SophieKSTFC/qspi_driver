@@ -401,9 +401,8 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
     uint32_t fbyte_address = mem_address;
 
-    for(int i=0; i < num_bytes; i+=FIFO_DEPTH){
+    //for(int i=0; i < num_bytes; i+=FIFO_DEPTH){
 
-        
         if(!is_write_enabled()){
             //printf("Write was NOT already enabled\n");
             write_enable();
@@ -437,49 +436,73 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         while (tx__state == false){
             tx__state = tx_empty();
         }
-        
+
         unsigned long bytes_written = FIFO_DEPTH;
 
-        /*
-        while (rx_state == false){
-            rx_state = rx_empty();
-        }
-        */
-        /*
         while(bytes_written < num_bytes){
 
-            printf("bytes written = %d\n", bytes_written);
-
-            qspi_controller.write_mem(QSPI_DTR, FL_WRITE_ENABLE, QSPI_STD_WIDTH);
-            qspi_controller.write_mem(QSPI_DTR, 0x00, QSPI_STD_WIDTH);
-            qspi_controller.write_mem(QSPI_DTR, 0x01, QSPI_STD_WIDTH);
-
-            //write_enable();
-            if(!is_write_enabled()){
-                std::cout << "Write was Not Enabled in topup write" << std::endl;
-                exit(1);
-            }
+            //printf("bytes written = %d\n", bytes_written);
 
             for(int d =0; d < FIFO_DEPTH; d++){
                 qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
             }
-            //qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
-            //qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-
+            if(bytes_written % 512 == 0){
+                qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
+                qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+            }
             bool tx_state_ = tx_empty();
             while (tx_state_ == false){
-                printf("stuck in tx state check .. ");
-                printf("QSPI Config Reg -- 0x%X\n", qspi_controller.read_mem(QSPI_STATUS_R, QSPI_STD_WIDTH));
                 tx_state_ = tx_empty();
             }
-            bool wip_ = write_in_progress();
-            while(wip_ == true){
-                printf("stuck in wip state check\n");
-                wip_ = write_in_progress();
-            }
+
             bytes_written += FIFO_DEPTH;
+
+            if(bytes_written % 512 == 0){
+
+                //printf("bytes written mod 512!\n");
+                qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+                qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+                bool wip = write_in_progress();
+                while(wip == true){
+                    wip = write_in_progress();
+                }
+
+                write_enable();
+
+                qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
+                qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
+
+                uint8_t msb = (bytes_written & 0xFF000000) >> 24;
+                uint8_t mid1 = (bytes_written & 0x00FF0000) >> 16;
+                uint8_t mid2 = (bytes_written & 0x0000FF00) >> 8;
+                uint8_t lsb = (bytes_written & 0x000000FF);
+
+                qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
+                qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
+                qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
+                qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
+            }
         }
-        */
+
+        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
+        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
+        
+        bool wip = write_in_progress();
+        while(wip == true){
+           // printf("stuck in external wip\n");
+            wip = write_in_progress();
+        }
+
+        if(program_error()){
+            std::cout << "Write Failed" << std::endl;
+            exit(1);
+        }
+        else{
+            std::cout << "Write Suceeded" << std::endl;
+        }
+
+        /*
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
@@ -499,6 +522,8 @@ uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         fbyte_address += 128;
     }
     return fbyte_address;
+
+    */
 }
 
 
