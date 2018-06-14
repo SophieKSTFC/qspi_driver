@@ -1,3 +1,7 @@
+/*
+*   Flash Memory Interface Cmd Line Tool
+*/
+
 #include <iostream> 
 #include <chrono>
 #include <string.h>
@@ -242,7 +246,6 @@ void write_enable(){
 *   @param : status_reg uint8_t, the value to write to the status register
 *   @param : config_reg uint8_t, the value to write to the config register
 */
-
 void write_flash_registers(uint8_t& status_reg, uint8_t& config_reg){
 
     write_enable();
@@ -300,7 +303,7 @@ void read_spansion_id(){
 
 
 /*  Loop function to perform @num_bytes of memory reads from @address in blocks of @increment.
-*   Writes the byte data to the binary file, in binary format
+*   Writes the byte data to the binary file, in binary format, if to_file is true.
 *   Returns the next address to read from 
 *   Used to handle reading bytes which do not align on the FIFO depth.
 */
@@ -381,9 +384,11 @@ uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& 
     return bytes_read;
 }
 
-/*  Sets up the read memory loop function, calculates how many bytes to read across the FIFO depth 
+/*  Sets up the read memory loop function, calculates how many bytes to read across the FIFO depth
+*   If to_file is true - writes to file. 
 *   Calls read_loop with the FIFO aligned num_bytes and then with the overflow num_bytes
 *   Calculates the time the read has taken in milliseconds.
+*   Returns the CRC code.
 */
 uint8_t read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::string& filename, bool to_file){
 
@@ -424,14 +429,15 @@ uint8_t read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, st
     }
     return crc;
 }
+
 /*
 *   Erase the entire (64MB) flash memory by setting all bytes to 0xFF.
 *   @param flash_num, int currently used to protect the flash memory 1 from being erased.
 *
 */
-
 void erase_flash_memory(int& flash_num){
 
+    //temporay hack to ensure we dont erase flash 1..
     if(flash_num == 1){
         std::cerr << "FATAL : COMMAND SET TO ERASE FLASH MEMORY CHIP 1.. QUITING" << std::endl;
         exit(1);
@@ -466,142 +472,6 @@ void erase_flash_memory(int& flash_num){
     }
 }
 
-/* old functions 
-uint32_t write_loop(uint32_t& mem_address, unsigned long& num_bytes){
-
-    uint32_t fbyte_address = mem_address;
-        if(!is_write_enabled()){
-            write_enable();
-        }
-        qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
-        qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
-
-        uint8_t msb = (fbyte_address & 0xFF000000) >> 24;
-        uint8_t mid1 = (fbyte_address & 0x00FF0000) >> 16;
-        uint8_t mid2 = (fbyte_address & 0x0000FF00) >> 8;
-        uint8_t lsb = (fbyte_address & 0x000000FF);
-
-        qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
-
-        for(int d =0; d < FIFO_DEPTH; d++){
-            qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
-        }
-
-        qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        
-        bool tx__state = tx_empty();
-        while (tx__state == false){
-            tx__state = tx_empty();
-        }
-
-        unsigned long bytes_written = FIFO_DEPTH;
-
-        while(bytes_written < num_bytes){
-
-            for(int d =0; d < FIFO_DEPTH; d++){
-                qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
-            }
-            if(bytes_written % 512 == 0){
-                qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
-                qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-            }
-            bool tx_state_ = tx_empty();
-            while (tx_state_ == false){
-                tx_state_ = tx_empty();
-            }
-
-            bytes_written += FIFO_DEPTH;
-
-            if(bytes_written % 512 == 0){
-                qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
-                qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        
-                bool wip = write_in_progress();
-                while(wip == true){
-                    wip = write_in_progress();
-                }
-
-                write_enable();
-
-                qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
-                qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
-
-                uint8_t msb = (bytes_written & 0xFF000000) >> 24;
-                uint8_t mid1 = (bytes_written & 0x00FF0000) >> 16;
-                uint8_t mid2 = (bytes_written & 0x0000FF00) >> 8;
-                uint8_t lsb = (bytes_written & 0x000000FF);
-
-                qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
-                qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
-                qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
-                qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
-            }
-        }
-
-        qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
-        qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        
-        bool wip = write_in_progress();
-        while(wip == true){
-            wip = write_in_progress();
-        }
-
-        if(program_error()){
-            std::cout << "Write Failed" << std::endl;
-            exit(1);
-        }
-    return bytes_written;
-}
-
-
-void custom_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
-
-    if(!is_write_enabled()){
-        write_enable();
-    }
-    qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
-    qspi_controller.write_mem(QSPI_DTR, FL_QUAD_PP, QSPI_STD_WIDTH);
-
-    uint8_t msb = (mem_address & 0xFF000000) >> 24;
-    uint8_t mid1 = (mem_address & 0x00FF0000) >> 16;
-    uint8_t mid2 = (mem_address & 0x0000FF00) >> 8;
-    uint8_t lsb = (mem_address & 0x000000FF);
-
-    qspi_controller.write_mem(QSPI_DTR, msb, QSPI_STD_WIDTH);
-    qspi_controller.write_mem(QSPI_DTR, mid1, QSPI_STD_WIDTH);
-    qspi_controller.write_mem(QSPI_DTR, mid2, QSPI_STD_WIDTH);
-    qspi_controller.write_mem(QSPI_DTR, lsb, QSPI_STD_WIDTH);
-
-    for(int d =0; d < num_bytes; d++){
-        qspi_controller.write_mem(QSPI_DTR, 0xAA, QSPI_STD_WIDTH);
-    }
-    qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
-    qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-    
-    bool tx_state_ = tx_empty();
-    while (tx_state_ == false){
-        tx_state_ = tx_empty();
-    }
-    
-    qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
-    qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
-        
-    bool wip = write_in_progress();
-    while(wip == true){
-        wip = write_in_progress();
-    }
-
-    if(program_error()){
-        std::cout << "Write Failed" << std::endl;
-        exit(1);
-    }
-
-}
-*/
 
 /*
 *   Writes @num_bytes to the flash memory device, starting at @mem_address from in_file 
@@ -717,12 +587,10 @@ uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes, uint8_
         std::cout << "Write Failed" << std::endl;
         exit(1);
     }
-
-    //printf("CRC for write : 0x%X\n", crc);
     return bytes_written;
 }
 
-/*  Loop function to perform @num_bytes of memory writes starting from @mem_address
+/*  Loop function to perform @num_bytes of memory writes starting from @mem_address, calculates the CRC of the file
 *   Writes the byte data from the binary file in_file 
 *   Used to handle writing bytes which do not align on the FIFO depth.
 *   Quits program execution if there was a program error.
@@ -827,7 +695,7 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
             std::cout << "Write Successfull" << std::endl;
         }
     }
-
+    //read the flash memory, not to file, calculating the CRC.
     if(verify){
 
         uint8_t read_crc = read_spansion_memory(mem_address, num_bytes,filename, false);
@@ -1075,8 +943,8 @@ void print_help(){
 int main(int argc, char* argv[]){
 
     calc_CRC8_table();
-    //printf("0x%X\n", compute_crc(in_file));
-
+   
+   //pass cmd line arguments
     if(argc == 1){
         std::cerr << "Insufficient arguments.. quiting." << std::endl;
         print_help();

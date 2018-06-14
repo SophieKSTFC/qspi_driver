@@ -1,7 +1,5 @@
 #include "qspi_memory.h"
 
-
-
 /*
 *   Constructor for qspi_memory.
 *   @Param base : base address for the device.
