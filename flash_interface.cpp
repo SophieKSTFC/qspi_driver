@@ -205,20 +205,22 @@ bool is_quad_enabled(){
     return ((config[1] == 1) ? true : false);
 }
 
-/*  Check whether a quad mode is enabled on the flash device
-*   Returns True if the Config Reg Bit 1 is High.
+/*  Check whether a program error occured in the flash memory
+*   Returns True if the statius Reg Bit 6 is High.
 */
 bool program_error(){
     std::bitset<8> status(read_flash_status_reg());
     return ((status[6] == 1) ? true : false);
 }
 
+/*
+*   Sets the write enable latch in the flash memory device if it is not already set
+*   Quits program execution if write fails to enable.
+*/
 void write_enable(){
 
-    if(is_write_enabled()){
-        //std::cout << "Write Already Enabled" << std::endl;
-    }
-    else{
+    if(!is_write_enabled()){
+
         qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, FL_WRITE_ENABLE, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_DTR, 0x00, QSPI_STD_WIDTH);
@@ -228,10 +230,7 @@ void write_enable(){
         qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
         qspi_controller.write_mem(QSPI_CONFIG_R, DISABLE_MASTER_TRAN, QSPI_CR_WIDTH);
         
-        if(is_write_enabled()){
-            //std::cout << "Write Has Been Enabled" << std::endl;
-        }
-        else{
+        if(!is_write_enabled()){
             std::cout << "Write Failed to Enable" << std::endl;
             exit(1);
         }
@@ -305,8 +304,9 @@ void read_spansion_id(){
 *   Returns the next address to read from 
 *   Used to handle reading bytes which do not align on the FIFO depth.
 */
-uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& increment){
+uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& increment, uint8_t& crc, bool to_file){
 
+    //crc = 0;
     uint8_t buffer_128[increment]; 
     qspi_controller.write_mem(QSPI_CONFIG_R, RESET_FIFO_MSTR_CONFIG_ENABLE, QSPI_CR_WIDTH);
     qspi_controller.write_mem(QSPI_DTR, FL_READ_QUAD_OUT, QSPI_STD_WIDTH);
@@ -343,9 +343,13 @@ uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& 
         uint8_t byte = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
         //out_file.write((char*)&byte, sizeof byte);
         buffer_128[d] = byte;
+        uint8_t crc_byte = (uint8_t) (byte ^ crc); //XOR the byte
+        crc = crc_table[crc_byte];
     }
-    out_file.write((char*)&buffer_128, sizeof (buffer_128));
-    memset(&buffer_128[0], 0, sizeof(buffer_128));
+    if(to_file){
+        out_file.write((char*)&buffer_128, sizeof (buffer_128));
+        memset(&buffer_128[0], 0, sizeof(buffer_128));
+    }
     unsigned long bytes_read = increment;
 
     while(bytes_read < num_bytes){
@@ -362,10 +366,13 @@ uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& 
         for(int d =0; d < increment; d++){
             uint8_t byte = qspi_controller.read_mem(QSPI_DRR, QSPI_STD_WIDTH);
             buffer_128[d] = byte;
+            uint8_t crc_byte = (uint8_t) (byte ^ crc); //XOR the byte
+            crc = crc_table[crc_byte];
         }
-
-        out_file.write((char*)&buffer_128, sizeof (buffer_128));
-        memset(&buffer_128[0], 0, sizeof(buffer_128));
+        if(to_file){
+            out_file.write((char*)&buffer_128, sizeof (buffer_128));
+            memset(&buffer_128[0], 0, sizeof(buffer_128));
+        }
         bytes_read +=increment;
     }
     qspi_controller.write_mem(QSPI_SSR, CHIP_DESELECT, QSPI_STD_WIDTH);
@@ -378,21 +385,23 @@ uint32_t topup_read(uint32_t& address, unsigned long& num_bytes, unsigned long& 
 *   Calls read_loop with the FIFO aligned num_bytes and then with the overflow num_bytes
 *   Calculates the time the read has taken in milliseconds.
 */
-void read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::string& filename){
+uint8_t read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::string& filename, bool to_file){
 
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
     
     unsigned long increment = FIFO_DEPTH; //max FIFO = 128
     unsigned long int FIFO_aligned_num_bytes = (floor(num_bytes/FIFO_DEPTH)) * FIFO_DEPTH;   // calculate how many times 128 goes into num_bytes round down to nearest integer calculate how many bytes can be read evenly on the FIFO boundary
     unsigned long int overflow_bytes = num_bytes - FIFO_aligned_num_bytes; // find the overflow between even bytes and requested bytes. 
-
-    out_file.open(filename, std::ios::out | std::ios::binary);
-
-    if(!out_file.is_open()){
-        std::cout << "Failed to Open Bin File.. Quiting" << std::endl;
-        exit(1);
+   
+    if(to_file){
+        out_file.open(filename, std::ios::out | std::ios::binary);
+        if(!out_file.is_open()){
+            std::cout << "Failed to Open Bin File.. Quiting" << std::endl;
+            exit(1);
+        }
     }
-
+    
+    uint8_t crc = 0;
     //quad_enable.
     if(!is_quad_enabled()){
         uint8_t status = 0x00;
@@ -400,15 +409,20 @@ void read_spansion_memory(uint32_t& mem_address, unsigned long& num_bytes, std::
         write_flash_registers(status, config);
     }
     if(is_quad_enabled()){
-        uint32_t next_addr = topup_read(mem_address, FIFO_aligned_num_bytes, increment);
-        topup_read(next_addr, overflow_bytes, overflow_bytes);
-        out_file.close();
+        
+        uint32_t next_addr = topup_read(mem_address, FIFO_aligned_num_bytes, increment, crc, to_file);
+        topup_read(next_addr, overflow_bytes, overflow_bytes, crc, to_file);
+        printf("CRC code for read : 0x%X\n", crc);
+        if(to_file){
+            out_file.close();
+        }
         std::chrono::high_resolution_clock::time_point finish = std::chrono::high_resolution_clock::now();
         std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish - start).count() << " ms to read" << std::endl;
     }
     else{
         std::cout << "Quad Mode Did Not Enable, Read Operation In-valid" << std::endl;
     }
+    return crc;
 }
 /*
 *   Erase the entire (64MB) flash memory by setting all bytes to 0xFF.
@@ -595,8 +609,9 @@ void custom_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 *   Returns the next address to write to 
 *   Quits program execution if there was a program error.
 */
-uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
+uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes, uint8_t& crc){
 
+    //uint8_t crc = 0;
     uint8_t buffer[FIFO_DEPTH];
     in_file.read((char*)(&buffer[0]), FIFO_DEPTH);  
     if(!in_file){
@@ -624,6 +639,8 @@ uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
     for(int d =0; d < FIFO_DEPTH; d++){
         qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+        uint8_t byte = (uint8_t) (buffer[d] ^ crc); //XOR the byte
+        crc = crc_table[byte];
     }
 
     qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
@@ -646,6 +663,8 @@ uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         }
         for(int d =0; d < FIFO_DEPTH; d++){
             qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+            uint8_t byte = (uint8_t) (buffer[d] ^ crc); //XOR the byte
+            crc = crc_table[byte];
         }
         if(bytes_written % 512 == 0){
             qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
@@ -698,6 +717,8 @@ uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
         std::cout << "Write Failed" << std::endl;
         exit(1);
     }
+
+    //printf("CRC for write : 0x%X\n", crc);
     return bytes_written;
 }
 
@@ -706,7 +727,7 @@ uint32_t file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 *   Used to handle writing bytes which do not align on the FIFO depth.
 *   Quits program execution if there was a program error.
 */
-void custom_file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
+void custom_file_write_loop(uint32_t& mem_address, unsigned long& num_bytes, uint8_t& crc){
     
     uint8_t buffer[num_bytes];
     in_file.seekg(mem_address);
@@ -734,6 +755,8 @@ void custom_file_write_loop(uint32_t& mem_address, unsigned long& num_bytes){
 
     for(int d =0; d < num_bytes; d++){
         qspi_controller.write_mem(QSPI_DTR, buffer[d], QSPI_STD_WIDTH);
+        uint8_t byte = (uint8_t) (buffer[d] ^ crc); //XOR the byte
+        crc = crc_table[byte];
     }
     qspi_controller.write_mem(QSPI_SSR, CHIP_SELECT, QSPI_STD_WIDTH);
     qspi_controller.write_mem(QSPI_CONFIG_R, ENABLE_MASTER_TRAN, QSPI_CR_WIDTH);
@@ -781,6 +804,7 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
     unsigned long int overflow_bytes = num_bytes - FIFO_aligned_num_bytes; // find the overflow between even bytes and requested bytes. 
 
     write_enable();
+    uint8_t crc = 0;
 
     if(!is_quad_enabled()){
         uint8_t status = 0x00;
@@ -788,14 +812,16 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
         write_flash_registers(status, config);
     }
     else{
-
-        uint32_t next_address = file_write_loop(mem_address, FIFO_aligned_num_bytes);
-        custom_file_write_loop(next_address, overflow_bytes);
+        
+        uint32_t next_address = file_write_loop(mem_address, FIFO_aligned_num_bytes, crc);
+        custom_file_write_loop(next_address, overflow_bytes, crc);
         if(program_error()){
             std::cout << "Write Failed" << std::endl;
             exit(1);
         }
         else{
+
+            printf("CRC code for write : 0x%X\n", crc);
             std::chrono::high_resolution_clock::time_point finish_write = std::chrono::high_resolution_clock::now();
             std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(finish_write - start_write).count() << " ms to write." << std::endl;
             std::cout << "Write Successfull" << std::endl;
@@ -803,7 +829,15 @@ void write_flash_memory(int& flash_num, uint32_t& mem_address, unsigned long& nu
     }
 
     if(verify){
-        // ???
+
+        uint8_t read_crc = read_spansion_memory(mem_address, num_bytes,filename, false);
+        
+        if(crc == read_crc){
+            std::cout << "Flash Program Verified Successfully" << std::endl;
+        }
+        else{
+            std::cout << "Flash Program Verification Failed" << std::endl;
+        }
     }
 
 }
@@ -1040,8 +1074,7 @@ void print_help(){
 
 int main(int argc, char* argv[]){
 
-
-    //calc_CRC8_table();
+    calc_CRC8_table();
     //printf("0x%X\n", compute_crc(in_file));
 
     if(argc == 1){
@@ -1094,6 +1127,7 @@ int main(int argc, char* argv[]){
                 }
             }
             un_init_qspi_mux();
+            return 0;
         }
 
         else if(arg_found(argc, argv, "-r", value)){
@@ -1122,10 +1156,11 @@ int main(int argc, char* argv[]){
                         size -= start_address;
                     }
                     printf("Reading %d bytes from flash number %d starting at address 0x%X, printing to a file called %s.\n", size, flash, start_address, filename.c_str());
-                    read_spansion_memory(start_address, size, filename);  
+                    read_spansion_memory(start_address, size, filename, true);  
                 }
                 un_init_qspi_mux();
             }
+            return 0;
         }
 
         else if(arg_found(argc, argv, "-e", value)){
@@ -1141,6 +1176,7 @@ int main(int argc, char* argv[]){
                 erase_flash_memory(flash);
             }
             un_init_qspi_mux();
+            return 0;
         }
         else{
             std::cerr << "No suitable program command was provided" << std::endl;
