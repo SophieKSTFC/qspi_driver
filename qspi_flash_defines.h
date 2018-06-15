@@ -1,0 +1,54 @@
+#ifndef QSPI_FLASH_DEFINES_H_
+#define QSPI_FLASH_DEFINES_H_
+
+#include <iostream>
+
+#define MUX_BASE 0x41210000
+#define MUX_OFFSET 0x08
+#define MUX_SET_FL1 0x104
+#define MUX_SET_FL2 0x105
+#define MUX_SET_FL3 0x106
+#define MUX_SET_FL4 0x107
+#define MUX_DESET 0x100
+#define MUX_WIDTH 32 
+
+#define QSPI_CR_WIDTH 32
+#define QSPI_STD_WIDTH 8 
+#define QSPI_BASE 0xA0030000
+#define QSPI_CONFIG_R 0x60
+#define QSPI_STATUS_R 0x64
+#define QSPI_DTR 0x68
+#define QSPI_DRR 0x6C
+#define QSPI_SSR 0x70
+
+//Flash instruction codes
+#define FL_READ_ID 0x90
+#define FL_WRITE_ENABLE 0x06
+#define FL_WRITE_REG 0x01
+#define FL_READ_STATUS 0x05
+#define FL_READ_CONFIG 0x35
+#define FL_READ_BAR 0x16
+#define FL_READ_QUAD_OUT 0x6C
+#define FL_READ_QUAD_IO 0xEB
+#define FL_QUAD_PP 0x34
+#define FL_BULK_ERASE 0x60
+
+#define RESET_FIFO_MSTR_CONFIG_ENABLE 0x000001E6
+
+#define ENABLE_MASTER_TRAN 0x00000086
+#define DISABLE_MASTER_TRAN 0x00000186
+#define CHIP_SELECT 0x00
+#define CHIP_DESELECT 0x01
+#define DUMMY_DATA 0xDD
+
+#define FL_MEM_START 0x00000000
+#define FL_MEM_SIZE 28734812
+#define FIFO_DEPTH 128
+#define PREAMBLE_SIZE 9
+#define DEFAULT_FLASH 1
+#define SIXTY_FOUR_MB 64000000
+#define MAX_FLASH_ADDRESS (SIXTY_FOUR_MB - 16)
+
+const std::string BIN_EXT = ".bin";
+
+#endif
