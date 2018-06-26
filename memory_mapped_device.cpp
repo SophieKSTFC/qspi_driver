@@ -1,52 +1,65 @@
+/*
+*   memory_mapped_device.cpp
+*   @Author Sophie Kirkham STFC, 2018
+*   Implementation for the memory_mapped_device class
+*   Memory maps an area of memory, providing read/write access to the area
+*/
+
 #include "memory_mapped_device.h"
 
 /*
-*   Constructor for qspi_memory.
+*   Constructor for qspi_memory objects.
 *   @Param base : base address for the device.
 */
-memory_mapped_device::memory_mapped_device(uint32_t base) {//, uint32_t offset, DataWidth width){
+memory_mapped_device::memory_mapped_device(uint32_t base) {
 
     this->target = base;
 }
 
 /*
-*   Initialises the memory map using the qspi_memory variables.
-*   Throws memException if it failed to open /dev/mem
-*   Throws memException if the mmap failed.
+*   Initialises the memory map using the qspi_memory class variables.
+*   Memory map is initialised with read,write and shared mapping.
+*   @throws mem_exception: if dev mem fails to open.
+*   @throws mem_exception: if the mmap fails to map the area.
 */
 void memory_mapped_device::map(){
 
-    if((fd = open("/dev/mem", O_RDWR | O_SYNC)) == -1)
+    // Open dev/mem setting the file descriptor (fd) with the output.
+    if((this->file_descriptor = open("/dev/mem", O_RDWR | O_SYNC)) == -1)
     {
-        throw mem_exception("Dev mem failed to open."); // failed to open the dev/mem
+        throw mem_exception("Dev mem failed to open.");
     }
 
-    /* Map one page */
+    // Map the address space, setting map_base.
     this->map_base = mmap(0, 
-                    MAP_SIZE, //size of the address space
-                    PROT_READ | PROT_WRITE, // read and write
-                    MAP_SHARED, //share the mapping
-                    this->fd, //dev/mem
-                    this->target & ~MAP_MASK // target address entered AND NOT MAP_MASK, always clips to the page boundary (page size) (i.e removes 1 from 0x80000001) for mmap to work
+                    MAP_SIZE, // Size of the address space
+                    PROT_READ | PROT_WRITE, // Read and write access
+                    MAP_SHARED, // Share the mapping
+                    this->file_descriptor, // File descriptor for dev/mem
+                    this->target & ~MAP_MASK // Target is clipped to the page boundary. 
     );
 
+    // Check to see if the mapped area has been mapped.
     if(this->map_base == (void *) -1){
-       throw mem_exception("Memory map failed to map the addressed area.");  // failed to map
+       throw mem_exception("Memory map failed to map the addressed area.");
     } 
 
-    this->virt_addr = this->map_base + (this->target & MAP_MASK); // base address clipped to page boundary i.e 0x80000000 plus .. (0x80000001 AND MAP_MASK) == 0x1. Getting the target address again.
+    // Set the virtual address to be the correct target address.
+    this->virt_addr = this->map_base + (this->target & MAP_MASK); 
 
 }
 
 /*
 *   Reads memory from the address (base + offset) in the width provided.
-*   Throws MemException if the datawidth is not supported.
-*   Returns the value read from the address.
+*   @param offset : offset address to read from
+*   @param width : data width to read in (8, 16, 32 bits)
+*   @throws mem_exception: if the datawidth is not supported.
+*   @returns read_result : the value read from the mapped address space.
 */    
 unsigned long memory_mapped_device::read_mem(uint32_t offset, uint8_t width){    
 
+    // get the full address to read from by adding the virtual base + offset
     this->full_addr = this->virt_addr + offset;
-    
     switch(width) 
     {
         case 8:
@@ -54,11 +67,9 @@ unsigned long memory_mapped_device::read_mem(uint32_t offset, uint8_t width){
             break;
         case 16:
             this->read_result = *((unsigned short *) this->full_addr);
-            //this->read_result = *((unsigned short *) this->virt_addr);
             break;
         case 32:
             this->read_result = *((unsigned short *) this->full_addr);
-            //this->read_result = *((unsigned long *) this->virt_addr);
             break;
         default:
             throw mem_exception("Illegal Data Width");
@@ -69,8 +80,10 @@ unsigned long memory_mapped_device::read_mem(uint32_t offset, uint8_t width){
 
 /*
 *   Writes memory to the address (base + offset) in the width provided.
-*   Throws MemException if the datawidth is not supported.
-*   Returns the value read back from the address.
+*   @param offset : the offset address to write to.
+*   @param the_data : the data value to write
+*   @param width : the data width to write in (8, 16, 32 bits)
+*   @throws mem_exception : if the datawidth is not supported.
 */
 unsigned long memory_mapped_device::write_mem(uint32_t offset, unsigned long the_data, uint8_t width){
 
@@ -94,12 +107,11 @@ unsigned long memory_mapped_device::write_mem(uint32_t offset, unsigned long the
             default: 
                 throw mem_exception("Illegal Data Width");
         }
-
 }
 
 /*
-*   Un maps the memory map..
-*   Throws MemException if it failed to un map.
+*   Un maps the memory map
+*   @throws mem_exception : if it failed to un map the virtual address space.
 */
 void memory_mapped_device::unmap(){
 
@@ -107,6 +119,6 @@ void memory_mapped_device::unmap(){
     {
         throw mem_exception("Memory Map Failed to Un-Map."); ;
     }
-    close(this->fd);
+    close(this->file_descriptor);
 }
 

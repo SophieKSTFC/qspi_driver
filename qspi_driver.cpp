@@ -1,6 +1,6 @@
 /*
 *   qspi_driver.cpp
-*   Sophie Kirkham, STFC
+*   @Author Sophie Kirkham STFC, 2018
 *   Main application entry point for qspi_driver .elf executable
 *   Command line tool to drive the QSPI controller 
 *   Facilitates read/erase/program access to/from .bin files with the ..
@@ -12,11 +12,13 @@
 #include "qspi_device.h"
 
 
-
 /*
-*   Checks through the command line arguments and returns true if the parameter was found
-*   If the parameter was found, @value is initiated with the flag value.
-*   Returns true/false depending on whether the param was found.
+*   Checks through the command line args and returns true if the parameter was found
+*   @param arg_num : number of arguments provided
+*   @param argv :  array of the command line arguments provided
+*   @param param : parameter argument to look for
+*   @param value : string reference to store the value of the argument  
+*   @returns true if the param was found.
 */
 bool arg_found(int arg_num, char * argv[], char * param, std::string& value){
     
@@ -35,47 +37,51 @@ bool arg_found(int arg_num, char * argv[], char * param, std::string& value){
     return found;
 }
 
-/*
-*   Helper function to initialise the qspi_controller and the multiplexer memory maps
+
+/*  initialises the qspi and mux memory maps
+*   @param qspi : reference to a qspi_device object 
 */
-void init_qspi_mux(){
-    qspi_controller.init_mmap();
-    multiplexer.init_mmap();
+void init_qspi_mux(qspi_device& qspi){
+
+    qspi.qspi.map();
+    qspi.mux.map();
 }
 
-/*
-*   Helper function to unmap the qspi_controller and the multiplexer memory maps and deset the multiplexer
+/*  un maps the qspi and mux memory maps
+*   @param qspi : reference to a qspi_device object 
 */
-void un_init_qspi_mux(){
-    qspi_controller.unmap();
-    multiplexer.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
-    multiplexer.unmap();
+void un_init_qspi_mux(qspi_device& qspi){
+
+    qspi.qspi.unmap();
+    qspi.mux.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
+    qspi.mux.unmap();
 }
 
 
 /*
-*   Helper function to set the flash memory chip to use through the multiplexer MMAP
-*   @param flash, integer value representing the flash chip number
-*   Returns 1 if an invalid flash memory chip was called.( ! 1-4 )
+*   Sets the flash memory chip to use through the multiplexer MMAP
+*   @param flash : integer value representing the flash chip number
+*   @param qspi : reference to a qspi_device object 
+*   @return 1 if an invalid flash memory chip was called.(! 1-4)
 */
-int set_flash(int flash){
+int set_flash(int flash, qspi_device& qspi){
 
     switch(flash){
         case 1:
             std::cout << "Using Flash Memory Chip 1.." << std::endl;
-            multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL1, MUX_WIDTH);
+            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL1, MUX_WIDTH);
             break;
         case 2:
             std::cout << "Using Flash Memory Chip 2.." << std::endl;
-            multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
+            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
             break;
         case 3:
             std::cout << "Using Flash Memory Chip 3.." << std::endl;
-            multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
+            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
             break;
         case 4:
             std::cout << "Using Flash Memory Chip 4.." << std::endl;
-            multiplexer.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
+            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
             break;
         default:
             std::cerr << "Invalid flash number, acceptable flash numbers are 1 - 4" << std::endl;
@@ -85,12 +91,13 @@ int set_flash(int flash){
 }
 
 /*
-*   Helper function to search for the -f flash number command line argument and set the flash through set_flash()
-*   Returns the flash number or -1 if the set_flash() fails due to an invalid flash number
-*   @param argc command line argument count
-*   @param argv[], command line argument array
+*   Searches for the -f argument and sets the flash through set_flash()
+*   @param argc : command line argument count
+*   @param argv[] : command line argument array
+*   @param qspi : reference to a qspi_device object
+*   @return flash_num : the flash number, or -1 if invalid flash num
 */
-int find_set_flash(int argc, char * argv[]){
+int find_set_flash(int argc, char * argv[], qspi_device& qspi){
 
     int flash_num;
     char* end;
@@ -100,7 +107,7 @@ int find_set_flash(int argc, char * argv[]){
     if(arg_found(argc, argv, "-f", value)){
 
         flash_num = strtoul(value.c_str(), &end, 10); 
-        if(set_flash(flash_num) != 1){
+        if(set_flash(flash_num, qspi) != 1){
             // do nothing
         }
         else{
@@ -109,17 +116,17 @@ int find_set_flash(int argc, char * argv[]){
     }
     else{ // no flash flag was provided, use the default - 1.
         std::cout << "Using default flash" << std::endl;
-        set_flash(DEFAULT_FLASH);
+        set_flash(DEFAULT_FLASH, qspi);
     }
     return flash_num;
 }
 
 /*
-*   Helper function to search for the -a address command line argument
+*   Searches for the -a address command line argument
 *   If no -a flag is found, the default value of 0x0 is returned.
-*   Returns the address value or -1 if an invalid memory address is provided
-*   @param argc command line argument count
-*   @param argv[], command line argument array
+*   @param argc : command line argument count
+*   @param argv[] : command line argument array
+*   @return address : the address value or -1 if an invalid memory address is provided
 */
 uint32_t find_address(int argc, char * argv[]){
 
@@ -146,11 +153,11 @@ uint32_t find_address(int argc, char * argv[]){
 }
 
 /*
-*   Helper function to search for the -s size command line argument
+*   Searches for the -s size command line argument
 *   If no -s is provided, the default of 64MB is used.
-*   Returns the size value or -1 if an invalid size is provided
 *   @param argc command line argument count
 *   @param argv[], command line argument array
+*   @returns size : the size value or -1 if an invalid size is provided
 */
 uint32_t find_size(int argc, char * argv[]){
 
@@ -177,11 +184,11 @@ uint32_t find_size(int argc, char * argv[]){
 }
 
 /*
-*   Helper function to search for the -o output command line argument
+*   Searches for the -o output command line argument
 *   If no -o is provided, the default filename is used
-*   Returns the filename with the extension of .bin
-*   @param argc command line argument count
-*   @param argv[], command line argument array
+*   @param argc : command line argument count
+*   @param argv[] : command line argument array
+*   @returns file : the filename with the extension of .bin
 */
 std::string get_out_filename(int argc, char * argv[]){
 
@@ -201,10 +208,11 @@ std::string get_out_filename(int argc, char * argv[]){
 }
 
 /*
-*   Helper function to search for the -i input command line argument
-*   Returns the filename with the extension of .bin or "-1" if no -i was provided.
-*   @param argc command line argument count
-*   @param argv[], command line argument array
+*   Searches for the -i input command line argument
+*   @param argc : command line argument count
+*   @param argv[] : command line argument array
+*   @returns file : the filename with the extension of .bin or .. 
+*    "-1" if no -i was provided.
 */
 std::string get_in_filename(int argc, char * argv[]){
 
@@ -246,8 +254,8 @@ void print_help(){
 
 int main(int argc, char* argv[]){
 
-    calc_CRC8_table();
-   
+    qspi_device qspi;
+
    //pass cmd line arguments
     if(argc == 1){
         std::cerr << "Insufficient arguments.. quiting." << std::endl;
@@ -263,17 +271,17 @@ int main(int argc, char* argv[]){
         bool verify = false;
         if(arg_found(argc, argv, "-p", value)){
  
-            init_qspi_mux();
+            init_qspi_mux(qspi);
 
-            int flash = find_set_flash(argc, argv);
+            int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux();
+                un_init_qspi_mux(qspi);
                 return 1;
             }
             else{
                 uint32_t start_address = find_address(argc, argv);
                 if(start_address == -1){
-                    un_init_qspi_mux();
+                    un_init_qspi_mux(qspi);
                     return 1;
                 }
                 else{
@@ -284,7 +292,7 @@ int main(int argc, char* argv[]){
                     else{
                         unsigned long size = find_size(argc, argv);
                         if(size == -1){
-                            un_init_qspi_mux();
+                            un_init_qspi_mux(qspi);
                             return 1;
                         }
                         else if(size == SIXTY_FOUR_MB){
@@ -294,60 +302,60 @@ int main(int argc, char* argv[]){
                             verify = true;
                         }
                         printf("Writing %d bytes to flash number %d starting at address 0x%X, from a file called %s.\n", size, flash, start_address, filename.c_str());
-                        write_flash_memory(flash, start_address, size, filename, verify);
+                        qspi.write_flash_memory(flash, start_address, size, filename, verify);
                     } 
                 }
             }
-            un_init_qspi_mux();
+            un_init_qspi_mux(qspi);
             return 0;
         }
 
         else if(arg_found(argc, argv, "-r", value)){
 
-            init_qspi_mux();
+            init_qspi_mux(qspi);
 
-            int flash = find_set_flash(argc, argv);
+            int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux();
+                un_init_qspi_mux(qspi);
                 return 1;
             }
             else{
                 uint32_t start_address = find_address(argc, argv);
                 if(start_address == -1){
-                    un_init_qspi_mux();
+                    un_init_qspi_mux(qspi);
                     return 1;
                 }
                 else{
                     std::string filename = get_out_filename(argc, argv);
                     unsigned long size = find_size(argc, argv);
                     if(size == -1){
-                        un_init_qspi_mux();
+                        un_init_qspi_mux(qspi);
                         return 1;
                     }
                     else if(size == SIXTY_FOUR_MB){
                         size -= start_address;
                     }
                     printf("Reading %d bytes from flash number %d starting at address 0x%X, printing to a file called %s.\n", size, flash, start_address, filename.c_str());
-                    read_spansion_memory(start_address, size, filename, true);  
+                    qspi.read_flash_memory(start_address, size, filename, true);  
                 }
-                un_init_qspi_mux();
+                un_init_qspi_mux(qspi);
             }
             return 0;
         }
 
         else if(arg_found(argc, argv, "-e", value)){
 
-            init_qspi_mux();
-            int flash = find_set_flash(argc, argv);
+            init_qspi_mux(qspi);
+            int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux();
+                un_init_qspi_mux(qspi);
                 return 1;
             }
             else{
                 printf("Erasing flash number %d.\n", flash);
-                erase_flash_memory(flash);
+                qspi.erase_flash_memory(flash);
             }
-            un_init_qspi_mux();
+            un_init_qspi_mux(qspi);
             return 0;
         }
         else{

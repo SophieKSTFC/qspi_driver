@@ -1,39 +1,47 @@
 #ifndef MEM_EXCEPTION_H_
 #define MEM_EXCEPTION_H_
 /*
+*   mem_exception.h
+*   @Author Sophie Kirkham STFC, 2018 
 *   Exception class implementation for memory mapped devices
-*
+*   Extends std::exception
 */
+
 #include <exception>
 #include <string>
 
-class mem_exception : public std::exception
-{
-public:
 
-    // Blank mem_exception constructor
-    mem_exception(void) throw() :
-        error_msg("")
-    {};
+class mem_exception : public std::exception{
+    
+    public:
 
-    // mem_exception with error message
-    mem_exception(const std::string the_error_msg) throw() :
-        error_msg(the_error_msg)
-    {};
+        // Blank mem_exception constructor
+        mem_exception(void) throw() :
+            error_msg("")
+        {};
 
-    // @override returns the error message as a c string
-    virtual const char* what(void) const throw()
-    {
-        return error_msg.c_str();
-    };
+        /*  mem_exception constructor with error message
+        *   @param the_error_msg : the error message to throw
+        */
+        mem_exception(const std::string the_error_msg) throw() :
+            error_msg(the_error_msg)
+        {};
 
-    // Destructor
-    ~mem_exception(void) throw() {};
+        
+        /*  @override implements what() from std::exception
+        *   @return : the error message as a c string
+        */
+        virtual const char* what(void) const throw(){
+            return error_msg.c_str();
+        };
 
-private:
+        // Destructor
+        ~mem_exception(void) throw() {};
 
-    const std::string error_msg;  // The error message
+    private:
 
-};// mem_exception
+        const std::string error_msg;  // The error message
+
+};
 
 #endif

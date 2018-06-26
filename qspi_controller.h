@@ -1,3 +1,10 @@
+/*
+*   qspi_constroller.h
+*   @Author Sophie Kirkham STFC, 2018
+*   Sub-class implementation of memory_mapped_device for FEM-II QSPI Controller
+*   Extends memory_mapped_device
+*/
+
 #ifndef QSPI_CONRTOLLER_H_
 #define QSPI_CONRTOLLER_H_
 

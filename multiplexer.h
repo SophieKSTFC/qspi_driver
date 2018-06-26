@@ -1,6 +1,12 @@
+/*
+*   multiplexer.h
+*   @Author Sophie Kirkham STFC, 2018
+*   Sub-class implementation of memory_mapped_device for FEM-II Multiplexer
+*   Extends memory_mapped_device
+*/
+
 #ifndef MULTIPLEXER_H_
 #define MULTIPLEXER_H_
-
 
 #include "memory_mapped_device.h"
 
