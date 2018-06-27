@@ -38,26 +38,6 @@ bool arg_found(int arg_num, char * argv[], char * param, std::string& value){
 }
 
 
-/*  initialises the qspi and mux memory maps
-*   @param qspi : reference to a qspi_device object 
-*/
-void init_qspi_mux(qspi_device& qspi){
-
-    qspi.qspi.map();
-    qspi.mux.map();
-}
-
-/*  un maps the qspi and mux memory maps
-*   @param qspi : reference to a qspi_device object 
-*/
-void un_init_qspi_mux(qspi_device& qspi){
-
-    qspi.qspi.unmap();
-    qspi.mux.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
-    qspi.mux.unmap();
-}
-
-
 /*
 *   Sets the flash memory chip to use through the multiplexer MMAP
 *   @param flash : integer value representing the flash chip number
@@ -65,28 +45,13 @@ void un_init_qspi_mux(qspi_device& qspi){
 *   @return 1 if an invalid flash memory chip was called.(! 1-4)
 */
 int set_flash(int flash, qspi_device& qspi){
-
-    switch(flash){
-        case 1:
-            std::cout << "Using Flash Memory Chip 1.." << std::endl;
-            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL1, MUX_WIDTH);
-            break;
-        case 2:
-            std::cout << "Using Flash Memory Chip 2.." << std::endl;
-            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
-            break;
-        case 3:
-            std::cout << "Using Flash Memory Chip 3.." << std::endl;
-            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
-            break;
-        case 4:
-            std::cout << "Using Flash Memory Chip 4.." << std::endl;
-            qspi.mux.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
-            break;
-        default:
-            std::cerr << "Invalid flash number, acceptable flash numbers are 1 - 4" << std::endl;
-            return 1;
-            break;
+   
+    try{
+        qspi.select_flash(flash);
+    }
+    catch(mem_exception& err){
+        std::cout << "Error occured during selecting the Flash device : " 
+        << err.what() << std::endl;
     }
 }
 
@@ -250,17 +215,48 @@ void print_help(){
     std::cerr << "-h <print help> (prints this usage guide)" << std::endl; 
 }
 
+/*
+*   Unmaps the qspi and multiplexer memory maps and exits the program
+*   @throws mem_exception : if unmap() fails.
+*/
+void clean_exit(qspi_device& qspi){
 
+    try{
+        qspi.un_map_qspi_mux();
+        exit(1);
+    }
+    catch(mem_exception& err){
+        std::cout << "An error occured during memory map tear-down : " <<
+        err.what() << std::endl;
+        exit(1);
+    }
+}
 
+/*
+*   Main entry point for the qspi_driver
+*   Passess command line arguments and calls the appropriate qspi_device methods
+*   @param argc : number of command line arguments provided
+*   @param argv : array of command line arguments
+*/
 int main(int argc, char* argv[]){
 
     qspi_device qspi;
 
+    try{
+        qspi.map_qspi_mux();
+    }
+    catch(mem_exception& err){
+        std::cout << "An error occured during memory map set-up : " <<
+        err.what() << std::endl;
+        exit(1);
+    }
+    
    //pass cmd line arguments
     if(argc == 1){
         std::cerr << "Insufficient arguments.. quiting." << std::endl;
         print_help();
-        return 1;
+        clean_exit(qspi);
+        //return 1;
     }
     else if (argc == 2 && strcmp(argv[1], "-h") == 0){
         print_help();   
@@ -271,28 +267,29 @@ int main(int argc, char* argv[]){
         bool verify = false;
         if(arg_found(argc, argv, "-p", value)){
  
-            init_qspi_mux(qspi);
+            //init_qspi_mux(qspi);
 
             int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux(qspi);
+                clean_exit(qspi);
                 return 1;
             }
             else{
                 uint32_t start_address = find_address(argc, argv);
                 if(start_address == -1){
-                    un_init_qspi_mux(qspi);
+                    clean_exit(qspi);
                     return 1;
                 }
                 else{
                     std::string filename = get_in_filename(argc, argv);
                     if(filename.compare("-1") == 0){
+                        clean_exit(qspi);
                         return 1;
                     }
                     else{
                         unsigned long size = find_size(argc, argv);
                         if(size == -1){
-                            un_init_qspi_mux(qspi);
+                            clean_exit(qspi);
                             return 1;
                         }
                         else if(size == SIXTY_FOUR_MB){
@@ -302,60 +299,83 @@ int main(int argc, char* argv[]){
                             verify = true;
                         }
                         printf("Writing %d bytes to flash number %d starting at address 0x%X, from a file called %s.\n", size, flash, start_address, filename.c_str());
-                        qspi.write_flash_memory(flash, start_address, size, filename, verify);
+                        
+                        try{
+                            qspi.write_flash_memory(flash, start_address, size, filename, verify);
+                        }
+                        catch(mem_exception& err){
+                            std::cout << "An error occured during write operation : " 
+                            << err.what() << std::endl;
+                            clean_exit(qspi);
+                            return 1;
+                        }
                     } 
                 }
             }
-            un_init_qspi_mux(qspi);
+            clean_exit(qspi);
             return 0;
         }
 
         else if(arg_found(argc, argv, "-r", value)){
 
-            init_qspi_mux(qspi);
-
             int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux(qspi);
+                clean_exit(qspi);
                 return 1;
             }
             else{
                 uint32_t start_address = find_address(argc, argv);
                 if(start_address == -1){
-                    un_init_qspi_mux(qspi);
+                    clean_exit(qspi);
                     return 1;
                 }
                 else{
                     std::string filename = get_out_filename(argc, argv);
                     unsigned long size = find_size(argc, argv);
                     if(size == -1){
-                        un_init_qspi_mux(qspi);
+                        clean_exit(qspi);
                         return 1;
                     }
                     else if(size == SIXTY_FOUR_MB){
                         size -= start_address;
                     }
                     printf("Reading %d bytes from flash number %d starting at address 0x%X, printing to a file called %s.\n", size, flash, start_address, filename.c_str());
-                    qspi.read_flash_memory(start_address, size, filename, true);  
+                    try{
+                        qspi.read_flash_memory(start_address, size, filename, true);  
+                    }
+                    catch(mem_exception& err){
+                        std::cout << "An error occured during read operation : " 
+                        << err.what() << std::endl;
+                        clean_exit(qspi);
+                        return 1;
+                    }
                 }
-                un_init_qspi_mux(qspi);
+                clean_exit(qspi);
             }
             return 0;
         }
 
         else if(arg_found(argc, argv, "-e", value)){
 
-            init_qspi_mux(qspi);
+            //init_qspi_mux(qspi);
             int flash = find_set_flash(argc, argv, qspi);
             if(flash == -1){
-                un_init_qspi_mux(qspi);
+                clean_exit(qspi);
                 return 1;
             }
             else{
                 printf("Erasing flash number %d.\n", flash);
-                qspi.erase_flash_memory(flash);
+                try{
+                    qspi.erase_flash_memory(flash);
+                }
+                catch(mem_exception& err){
+                    std::cout << "An error occured during erase operation : " 
+                    << err.what() << std::endl;
+                    clean_exit(qspi);
+                    return 1;                    
+                }
             }
-            un_init_qspi_mux(qspi);
+            clean_exit(qspi);
             return 0;
         }
         else{
@@ -363,8 +383,6 @@ int main(int argc, char* argv[]){
             print_help();
             return 1;
         }
-
         return 0;
     }
-
 }

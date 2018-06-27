@@ -424,7 +424,12 @@ uint8_t qspi_device::read_flash_memory(uint32_t& mem_address, unsigned long& num
     if(!is_quad_enabled()){
         uint8_t status = 0x00;
         uint8_t config = 0x02;
-        write_flash_registers(status, config);
+        try{
+            write_flash_registers(status, config);
+        }
+        catch(mem_exception& err){
+            throw;
+        }
     }
     if(is_quad_enabled()){
         
@@ -524,7 +529,7 @@ uint32_t qspi_device::write_n_fifo_aligned_bytes_from_file(uint32_t& mem_address
 
     // check the file read succeeded.
     if(!this->in_file){
-        throw mem_exception("File Failed to read FIFO Depth Bytes");
+        throw mem_exception("Failed to Read Bytes from File.");
     }
 
     uint32_t fbyte_address = mem_address;
@@ -583,7 +588,7 @@ uint32_t qspi_device::write_n_fifo_aligned_bytes_from_file(uint32_t& mem_address
 
         // check the read operation is ok 
         if(!this->in_file){
-            std::cout << "File Failed to read FIFO Depth Bytes\n" << std::endl;
+            throw mem_exception("Failed to Read Bytes from File.");
         }
 
         // write the 128 bytes to memory
@@ -688,7 +693,7 @@ void qspi_device::write_n_unaligned_bytes_from_file(uint32_t& mem_address, unsig
 
     // check the file read succeeded.
     if(!this->in_file){
-        std::cout << "File Failed to read FIFO Depth Bytes\n" << std::endl;
+        throw mem_exception("Failed to Read Bytes from File.");
     }
 
     // check that write is enabled, if not - enable it.
@@ -774,9 +779,13 @@ void qspi_device::write_flash_memory(int& flash_num, uint32_t& mem_address, unsi
     if(!this->in_file){
         throw mem_exception ("File Failed to Open");
     }
-
-    // erase the flash to enable programming
-    erase_flash_memory(flash_num);    
+    try{
+        // erase the flash to enable programming
+        erase_flash_memory(flash_num);  
+    }
+    catch(mem_exception& err){
+        throw;
+    }  
     std::chrono::high_resolution_clock::time_point start_write = std::chrono::high_resolution_clock::now();
     // calculate how many bytes can be read evenly on the FIFO boundary
     unsigned long int FIFO_aligned_num_bytes = (floor(num_bytes/FIFO_DEPTH)) * FIFO_DEPTH;
@@ -791,14 +800,30 @@ void qspi_device::write_flash_memory(int& flash_num, uint32_t& mem_address, unsi
     if(!is_quad_enabled()){
         uint8_t status = 0x00;
         uint8_t config = 0x02;
-        write_flash_registers(status, config);
+        try{
+            write_flash_registers(status, config);
+        }
+        catch(mem_exception& err){
+            throw;
+        }
     }
     else{
         // write the fifo aligned number of bytes
-        uint32_t next_address = write_n_fifo_aligned_bytes_from_file(mem_address, FIFO_aligned_num_bytes, crc);
-        // write the left over overflow bytes
-        write_n_unaligned_bytes_from_file(next_address, overflow_bytes, crc);
-
+        uint32_t next_address;
+        try{
+            next_address = write_n_fifo_aligned_bytes_from_file(mem_address, FIFO_aligned_num_bytes, crc);
+        }
+        catch(mem_exception& err){
+            throw;
+        }
+        try{
+            // write the left over overflow bytes
+            write_n_unaligned_bytes_from_file(next_address, overflow_bytes, crc);
+        }
+        catch(mem_exception& err){
+            throw;
+        }
+       
         // check for a program error
         if(program_error()){
             throw mem_exception("Program Error : Write Operation Failed");
@@ -826,3 +851,100 @@ void qspi_device::write_flash_memory(int& flash_num, uint32_t& mem_address, unsi
     }
 
 }
+
+/*
+*   Selects the flash chip to use through the multiplexer memory device
+*   @param flash_num : integer value for the flash chip to select 
+*   @throws mem_exception : if write_mem fails due to incorrect data width
+*   @throws mem_exception : if a flash number outside 1-4 is provided
+*/
+void qspi_device::select_flash(int& flash_num){
+
+    try{
+        switch(flash_num){
+                case 1:
+                    std::cout << "Using Flash Memory Chip 1.." << std::endl;
+                    this->mux.write_mem(MUX_OFFSET, MUX_SET_FL1, MUX_WIDTH);
+                    break;
+                case 2:
+                    std::cout << "Using Flash Memory Chip 2.." << std::endl;
+                    this->mux.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
+                    break;
+                case 3:
+                    std::cout << "Using Flash Memory Chip 3.." << std::endl;
+                    this->mux.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
+                    break;
+                case 4:
+                    std::cout << "Using Flash Memory Chip 4.." << std::endl;
+                    this->mux.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
+                    break;
+    
+            default:
+                throw mem_exception("Invalid flash number provided, flash 1-4 only accepted");
+                break;
+        }
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+}
+
+/*
+*   Deselects the flash chip in use through the multiplexer memory device
+*   @throws mem_exception : if write_mem fails due to incorrect data width
+*/
+void qspi_device::deselect_flash(){
+    try{
+        this->mux.write_mem(MUX_OFFSET, MUX_DESET, MUX_WIDTH);
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+}
+
+/*
+*   Maps the memory areas used for the qspi controller and multiplexer
+*   Calls map() for both qspi and mux.
+*   @throws mem_exception : if qspi controller memory map fails
+*   @throws mem_exception : if multiplexer memory map fails
+*/
+void qspi_device::map_qspi_mux(){
+
+    try{
+        this->qspi.map();
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+    try{  
+        this->mux.map();
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+}
+
+/*
+*   Un-Maps the memory areas used for the qspi controller and multiplexer
+*   Deselects the flash chip to be used through the multiplexer
+*   Calls unmap() for both qspi and mux and deselect_flash()
+*   @throws mem_exception : if qspi controller memory map fails to unmap
+*   @throws mem_exception : if multiplexer fails to deselect the flash chip.
+*   @throws mem_exception : if multiplexer memory map fails to unmap
+*/
+void qspi_device::un_map_qspi_mux(){
+     try{
+        this->qspi.unmap();
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+    try{
+        this->deselect_flash();
+        this->mux.unmap();
+    }
+    catch(mem_exception& err){
+        throw;
+    }
+}
+       

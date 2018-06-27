@@ -25,11 +25,12 @@ class qspi_device{
         uint8_t crc_table[256]; // cyclic refundancy check (CRC) table
         uint8_t polynominal = 0x1D;     // fixed 8 bit polynominal for CRC
 
-    public: 
-
         qspi_controller qspi;   // memory mapped qspi_controller
         multiplexer mux;        // memory mapped multiplexer
-        
+
+    public: 
+
+
         qspi_device(){};     
         ~qspi_device(){};
 
@@ -47,6 +48,10 @@ class qspi_device{
         void calc_CRC8_table();
         void erase_flash_memory(int& flash_num);
         void write_flash_registers(uint8_t& status_reg, uint8_t& config_reg);
+        void select_flash(int& flash_num);
+        void deselect_flash();
+        void map_qspi_mux();
+        void un_map_qspi_mux();
        
         
         uint32_t read_n_bytes(uint32_t& address, 
