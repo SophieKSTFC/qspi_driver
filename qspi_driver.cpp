@@ -8,8 +8,13 @@
 *   Enables CRC-8 Verification of programming 
 */
 
-#include <iostream> 
+#include <iostream>
+#include <boost/program_options.hpp>
+#include "boost/date_time/posix_time/posix_time.hpp"
 #include "qspi_device.h"
+
+
+namespace po = boost::program_options;
 
 
 /*
@@ -240,8 +245,102 @@ void clean_exit(qspi_device& qspi){
 */
 int main(int argc, char* argv[]){
 
-    qspi_device qspi;
+    std::string timestamp = boost::posix_time::to_iso_extended_string(boost::posix_time::microsec_clock::local_time());
+    std::string operation;
+    bool verify = false;
+    int flash_chip;
+    uint32_t address;
+    std::string input_file;
+    std::string output_file;
+    unsigned long size;
+    po::options_description options("Options");
 
+    try{
+        // set up options for command line arguments
+        options.add_options()
+            ("help, h", "Prints the help menu")
+            ("operation, op", po::value<std::string>()->required(), 
+                "Operation to perform (read, erase, program), mandatory argument.")
+            ("flash_chip, f", po::value<int>()->required(),  
+                "The flash chip to use (1: Chip 1, 2: Chip 2, 3: Chip 3, 4: Chip 4), mandatory argument.")
+            ("verify, v", 
+                "Perform a CRC-8 verification of the flash memory contents and the .bin file provided.")
+            ("address, a", po::value<uint32_t>()->default_value(0x00000000), 
+                "Hexidecimal Flash memory address to start the operation from (Default: 0x00000000.")
+            ("input_file, i", po::value<std::string>(), 
+                "Binary input filename to program the Flash with, file must pre-exist, required when op = read.")
+            ("output_file, o", po::value<std::string>()->default_value(timestamp + "_flash_dump"), 
+                "Binary output filename to store Flash memory contents in (Default: <timestamp> + _flash_dump)")
+            ("size, s", po::value<unsigned long>(), 
+                "Integer-decimal value for the number of bytes to program, read or erase."); 
+        
+        //generate variables map and parse command line arguments 
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, options), vm);
+        
+        // check for help first, print help then quit.
+        if(vm.count("help")){
+            std::cout << "Usage: qspi_driver [operation][flash number][options]" << std::endl;
+            std::cout << options << std::endl;
+            exit(1);
+        }
+        // get any notifications from the variables map i.e. missed required param
+        po::notify(vm);
+
+        // pass flags and values
+        if(vm.count("operation")){
+
+            operation = vm["operation"].as<std::string>();
+
+            // check an input file was provided for a read operation
+            if(operation.compare("read") == 0){
+                if(vm.count("input_file")){
+                    input_file = vm["input_file"].as<std::string>();
+                }
+                else{
+                    std::cout << "Input file is required when performing a read operation" << std::endl;
+                    exit(1);
+                }
+            }
+        }
+
+        if(vm.count("flash_chip")){
+            flash_chip = vm["flash_chip"].as<int>();
+        }
+        if(vm.count("verify")){
+            verify = true;
+        }
+        if(vm.count("address")){
+            char* end;
+            // need to check whether address is being populated properly in hex.
+            address = vm["address"].as<uint32_t>();
+            //address = strtoul(address.c_str(), &end, 16);
+        }
+        if(vm.count("size")){
+            size = vm["size"].as<unsigned long>();
+        }
+        if(vm.count("output_file")){
+            output_file = vm["output_file"].as<std::string>();
+        }
+    }
+    catch(const po::error &ex){
+        std::cerr << ex.what() << std::endl;
+    }
+
+    // print out helpful message
+    std::cout << "Performing " << operation << " operation." << std::endl;
+    std::cout << "Using flash chip " << flash_chip << std::endl;
+
+    // check and trim the size parameter to prevent memory over runs
+    if((size + address) > SIXTY_FOUR_MB){
+        std::cout << "Starting memory addres + size is greater than"
+        << "flash memory size (64MB), clipping size to prevent overrun" << std::endl;
+        size -= (size + address) - SIXTY_FOUR_MB;
+    }
+
+    qspi_device qspi; // initialised qspi_device
+
+    // set up the memory mapped areas for qspi and mux
     try{
         qspi.map_qspi_mux();
     }
@@ -250,7 +349,83 @@ int main(int argc, char* argv[]){
         err.what() << std::endl;
         exit(1);
     }
-    
+
+    //select the flash chip 
+    try{
+        qspi.select_flash(flash_chip);
+    }
+    catch(mem_exception& err){
+        std::cout << "Error occured during selecting the Flash device : " 
+        << err.what() << std::endl;
+        clean_exit(qspi);
+        return 1;
+    }
+
+    // handle a read operation 
+    if(operation.compare("read") == 0){
+
+        std::cout << "Reading " << size << " bytes from flash chip " 
+        << flash_chip  << " starting at address " << std::hex << address
+        << std::dec << "printing to a file called " << output_file.c_str();
+
+        try{
+            qspi.read_flash_memory(address, size, output_file, true);  
+        }
+        catch(mem_exception& err){
+            std::cout << "An error occured during read operation : " 
+            << err.what() << std::endl;
+            clean_exit(qspi);
+            return 1;
+        }
+    }
+
+    // handle an erase operation
+    else if(operation.compare("erase") == 0){
+
+        std::cout << "Erasing flash chip " << flash_chip << std::endl;
+        try{
+            qspi.erase_flash_memory(flash_chip);
+        }
+        catch(mem_exception& err){
+            std::cout << "An error occured during erase operation : " 
+            << err.what() << std::endl;
+            clean_exit(qspi);
+            return 1;                    
+        }
+    }
+
+    // handle a program operation 
+    else if(operation.compare("program") == 0){
+
+        std::cout << "Writing " << size << " bytes to flash chip " 
+        << flash_chip  << " starting at address " << std::hex << address
+        << std::dec << "from a file called " << input_file.c_str();
+              
+        try{
+            qspi.write_flash_memory(flash_chip, address, size, input_file, verify);
+        }
+        catch(mem_exception& err){
+            std::cout << "An error occured during write operation : " 
+            << err.what() << std::endl;
+            clean_exit(qspi);
+            return 1;
+        }
+
+    }
+
+    // operation not supported - quit.
+    else{
+        std::cout << "Unsupported operation argument." << std::endl;
+        std::cout << options << std::endl;
+        clean_exit(qspi);
+        exit(1);
+    }
+
+    clean_exit(qspi);
+    return 0;
+
+
+    /*
    //pass cmd line arguments
     if(argc == 1){
         std::cerr << "Insufficient arguments.. quiting." << std::endl;
@@ -354,7 +529,7 @@ int main(int argc, char* argv[]){
             }
             return 0;
         }
-
+        /*
         else if(arg_found(argc, argv, "-e", value)){
 
             //init_qspi_mux(qspi);
@@ -378,6 +553,7 @@ int main(int argc, char* argv[]){
             clean_exit(qspi);
             return 0;
         }
+        
         else{
             std::cerr << "No suitable program command was provided" << std::endl;
             print_help();
@@ -385,4 +561,6 @@ int main(int argc, char* argv[]){
         }
         return 0;
     }
+
+    */
 }
