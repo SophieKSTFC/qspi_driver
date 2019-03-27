@@ -863,19 +863,19 @@ void qspi_device::select_flash(int& flash_num){
     try{
         switch(flash_num){
                 case 1:
-                    std::cout << "Using Flash Memory Chip 1.." << std::endl;
+                    //std::cout << "Using Flash Memory Chip 1.." << std::endl;
                     this->mux.write_mem(MUX_OFFSET, MUX_SET_FL1, MUX_WIDTH);
                     break;
                 case 2:
-                    std::cout << "Using Flash Memory Chip 2.." << std::endl;
+                    //std::cout << "Using Flash Memory Chip 2.." << std::endl;
                     this->mux.write_mem(MUX_OFFSET, MUX_SET_FL2, MUX_WIDTH);
                     break;
                 case 3:
-                    std::cout << "Using Flash Memory Chip 3.." << std::endl;
+                    //std::cout << "Using Flash Memory Chip 3.." << std::endl;
                     this->mux.write_mem(MUX_OFFSET, MUX_SET_FL3, MUX_WIDTH);
                     break;
                 case 4:
-                    std::cout << "Using Flash Memory Chip 4.." << std::endl;
+                    //std::cout << "Using Flash Memory Chip 4.." << std::endl;
                     this->mux.write_mem(MUX_OFFSET, MUX_SET_FL4, MUX_WIDTH);
                     break;
     

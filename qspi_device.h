@@ -15,6 +15,7 @@
 #include "qspi_controller.h"
 #include "multiplexer.h"
 #include "qspi_flash_defines.h"
+#include <chrono>
 
 class qspi_device{
 
@@ -31,7 +32,7 @@ class qspi_device{
     public: 
 
 
-        qspi_device(){};     
+        qspi_device();     
         ~qspi_device(){};
 
         uint8_t read_flash_status_reg();
